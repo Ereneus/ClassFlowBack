@@ -1,0 +1,61 @@
+spring:
+  profiles:
+    default: entra
+  application:
+    name: ms-auth
+  datasource:
+    url: jdbc:h2:mem:testdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: password
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: true
+    defer-datasource-initialization: false
+  flyway:
+    locations: classpath:db/migration
+    enabled: true
+    baseline-on-migrate: false
+    out-of-order: false
+    encoding: UTF-8
+
+server:
+  port: 8081
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: ${JWT_EXPIRATION:86400000}
+
+services:
+  notification:
+    url: ${NOTIFICATION_SERVICE_URL:http://localhost:8085}
+
+internal:
+  api:
+    key: ${INTERNAL_API_KEY}
+
+app:
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}
+
+# Con ambos valores definidos, el modo local tambien acepta access tokens de Microsoft Entra
+# (login hibrido). Vacios: solo login local. El perfil entra los define como obligatorios.
+entra:
+  issuer-uri: ${ENTRA_ISSUER_URI:}
+  audience: ${ENTRA_API_AUDIENCE:}
+
+password-reset:
+  expiration-minutes: ${PASSWORD_RESET_EXPIRATION_MINUTES:30}
+
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: local
+  # Sin esto, el @RestControllerAdvice del servicio resuelve la excepcion antes de que
+  # el resolver de Sentry tenga oportunidad de capturarla, y nunca se reporta nada.
+  exception-resolver-order: -2147483648

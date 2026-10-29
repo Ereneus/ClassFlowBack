@@ -1,0 +1,52 @@
+package com.ohiggins.classflow.notification.entity;
+
+import jakarta.persistence.*;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+import com.ohiggins.classflow.notification.enums.NotificationType;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "notifications")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class Notification {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    // Sin nullable=false: los correos directos (POST /api/notifications/email) no tienen
+    // un usuario destinatario en el dominio de negocio, a diferencia de las alertas.
+    private Long userId;
+
+    @Column(nullable = false)
+    @Enumerated(EnumType.STRING)
+    private NotificationType type;
+
+    @Column(nullable = false)
+    private String subject;
+
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String content;
+
+    @Column(nullable = false)
+    private Boolean sent = false;
+
+    @Column(name = "sent_at")
+    private LocalDateTime sentAt;
+
+    @Column(name = "created_at", nullable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "error_message")
+    private String errorMessage;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+    }
+}

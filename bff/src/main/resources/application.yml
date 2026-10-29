@@ -1,0 +1,34 @@
+server:
+  port: 8086
+
+spring:
+  profiles:
+    default: entra
+  application:
+    name: bff
+
+services:
+  auth:
+    base-url: http://localhost:8081
+  academic:
+    base-url: http://localhost:8082
+  assistance:
+    base-url: http://localhost:8083
+  message:
+    base-url: http://localhost:8084
+  notification:
+    base-url: http://localhost:8085
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: local
+  exception-resolver-order: -2147483648

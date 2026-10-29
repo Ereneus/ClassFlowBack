@@ -1,0 +1,258 @@
+services:
+  auth-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_pass
+    volumes:
+      - auth-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - classflow-back-net
+
+  academic-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: academic_db
+      POSTGRES_USER: academic_user
+      POSTGRES_PASSWORD: academic_pass
+    volumes:
+      - academic-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U academic_user -d academic_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - classflow-back-net
+
+  assistance-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: assistance_db
+      POSTGRES_USER: assistance_user
+      POSTGRES_PASSWORD: assistance_pass
+    volumes:
+      - assistance-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistance_user -d assistance_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - classflow-back-net
+
+  message-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: message_db
+      POSTGRES_USER: message_user
+      POSTGRES_PASSWORD: message_pass
+    volumes:
+      - message-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U message_user -d message_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - classflow-back-net
+
+  notification-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: notification_db
+      POSTGRES_USER: notification_user
+      POSTGRES_PASSWORD: notification_pass
+    volumes:
+      - notification-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notification_user -d notification_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - classflow-back-net
+
+  glitchtip-db:
+    image: postgres:18
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: "trust"
+    volumes:
+      - glitchtip-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - classflow-back-net
+
+  glitchtip-valkey:
+    image: valkey/valkey:9
+    networks:
+      - classflow-back-net
+
+  # Error tracking self-hospedado (compatible con el SDK de Sentry). UI en http://localhost:8000.
+  # La primera vez, crear una cuenta/organizacion/proyecto ahi y copiar el DSN a SENTRY_DSN en .env.
+  glitchtip:
+    image: glitchtip/glitchtip:6
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@glitchtip-db:5432/postgres
+      VALKEY_URL: redis://glitchtip-valkey:6379
+      SECRET_KEY: "${GLITCHTIP_SECRET_KEY:?Definir GLITCHTIP_SECRET_KEY en backend/.env (openssl rand -hex 32)}"
+      EMAIL_URL: consolemail://
+      GLITCHTIP_DOMAIN: http://localhost:8000
+      DEFAULT_FROM_EMAIL: glitchtip@classflow.cl
+      ENABLE_ADMIN: "True"
+      SERVER_ROLE: all_in_one
+    depends_on:
+      glitchtip-db:
+        condition: service_healthy
+      glitchtip-valkey:
+        condition: service_started
+    volumes:
+      - glitchtip-uploads:/code/uploads
+    networks:
+      - classflow-back-net
+
+  api-gateway:
+    build: ./api-gateway
+    image: api-gateway:local
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=${GATEWAY_SPRING_PROFILES_ACTIVE:-docker,entra}
+      - ENTRA_ISSUER_URI=${ENTRA_ISSUER_URI:?Definir ENTRA_ISSUER_URI en backend/.env}
+      - ENTRA_API_AUDIENCE=${ENTRA_API_AUDIENCE:?Definir ENTRA_API_AUDIENCE en backend/.env}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    depends_on:
+      - bff
+      - ms-auth
+      - ms-academic
+      - ms-assistance
+      - ms-message
+      - ms-notification
+    networks:
+      - classflow-back-net
+
+  bff:
+    build: ./bff
+    image: bff:local
+    environment:
+      - SPRING_PROFILES_ACTIVE=${BFF_SPRING_PROFILES_ACTIVE:-docker,entra}
+      - ENTRA_ISSUER_URI=${ENTRA_ISSUER_URI:?Definir ENTRA_ISSUER_URI en backend/.env}
+      - ENTRA_API_AUDIENCE=${ENTRA_API_AUDIENCE:?Definir ENTRA_API_AUDIENCE en backend/.env}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    depends_on:
+      - ms-auth
+      - ms-academic
+      - ms-assistance
+      - ms-message
+      - ms-notification
+    networks:
+      - classflow-back-net
+
+  ms-auth:
+    build: ./ms-auth
+    image: ms-auth:local
+    environment:
+      - SPRING_PROFILES_ACTIVE=${MS_AUTH_SPRING_PROFILES_ACTIVE:-docker,entra}
+      - ENTRA_ISSUER_URI=${ENTRA_ISSUER_URI:?Definir ENTRA_ISSUER_URI en backend/.env}
+      - ENTRA_API_AUDIENCE=${ENTRA_API_AUDIENCE:?Definir ENTRA_API_AUDIENCE en backend/.env}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - JWT_SECRET=${JWT_SECRET:?Definir JWT_SECRET en backend/.env (openssl rand -hex 32)}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Definir INTERNAL_API_KEY en backend/.env (openssl rand -hex 32)}
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    networks:
+      - classflow-back-net
+
+  ms-academic:
+    build: ./ms-academic
+    image: ms-academic:local
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    depends_on:
+      academic-db:
+        condition: service_healthy
+    networks:
+      - classflow-back-net
+
+  ms-assistance:
+    build: ./ms-assistance
+    image: ms-assistance:local
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    depends_on:
+      assistance-db:
+        condition: service_healthy
+    networks:
+      - classflow-back-net
+
+  ms-message:
+    build: ./ms-message
+    image: ms-message:local
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    depends_on:
+      message-db:
+        condition: service_healthy
+    networks:
+      - classflow-back-net
+
+  ms-notification:
+    build: ./ms-notification
+    image: ms-notification:local
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - MAIL_HOST=${MAIL_HOST:-smtp.gmail.com}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - MAIL_FROM=${MAIL_FROM}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Definir INTERNAL_API_KEY en backend/.env (openssl rand -hex 32)}
+    depends_on:
+      notification-db:
+        condition: service_healthy
+    networks:
+      - classflow-back-net
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8080/api
+    image: classflow-frontend:local
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - classflow-back-net
+
+networks:
+  classflow-back-net:
+    name: classflow-back-net
+    driver: bridge
+
+volumes:
+  auth-postgres-data:
+  academic-postgres-data:
+  assistance-postgres-data:
+  message-postgres-data:
+  notification-postgres-data:
+  glitchtip-postgres-data:
+  glitchtip-uploads:

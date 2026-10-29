@@ -1,0 +1,44 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://assistance-db:5432/assistance_db
+    driver-class-name: org.postgresql.Driver
+    username: assistance_user
+    password: assistance_pass
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: true
+    defer-datasource-initialization: false
+  flyway:
+    locations: classpath:db/migration
+    enabled: true
+    baseline-on-migrate: false
+    out-of-order: false
+    encoding: UTF-8
+  h2:
+    console:
+      enabled: false
+
+server:
+  port: 8083
+
+auth:
+  service:
+    url: ${AUTH_SERVICE_URL:http://ms-auth:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info"
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: docker
+  exception-resolver-order: -2147483648

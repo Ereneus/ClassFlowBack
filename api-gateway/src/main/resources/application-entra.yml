@@ -1,0 +1,3 @@
+entra:
+  issuer-uri: ${ENTRA_ISSUER_URI}
+  audience: ${ENTRA_API_AUDIENCE}

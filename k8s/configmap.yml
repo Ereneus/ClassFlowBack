@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: classflow-config
+  namespace: classflow
+data:
+  SPRING_PROFILES_ACTIVE: "docker"
+  # Issuer v1 (sts.windows.net): la app de la API emite tokens v1. Con tokens v2 usar
+  # https://login.microsoftonline.com/<TENANT_ID>/v2.0
+  ENTRA_ISSUER_URI: "https://sts.windows.net/981c9c3d-2cb3-493c-8b5e-bcf013a445e3/"
+  ENTRA_API_AUDIENCE: "api://d3ec09df-b3b2-420c-b0dc-8b5534f58462"
+  MAIL_HOST: "smtp.gmail.com"
+  MAIL_PORT: "587"
+  AUTH_SERVICE_URL: "http://ms-auth:8081"
