@@ -11,6 +11,8 @@ import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtClaimNames;
+import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
@@ -22,6 +24,9 @@ import org.springframework.security.web.server.SecurityWebFilterChain;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Validacion local de access tokens emitidos por Microsoft Entra ID.
@@ -30,6 +35,9 @@ import java.util.List;
 @EnableWebFluxSecurity
 @Profile("entra")
 public class EntraSecurityConfig {
+
+    private static final Pattern TENANT_ID =
+            Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
 
     private final String issuerUri;
     private final String audience;
@@ -57,7 +65,10 @@ public class EntraSecurityConfig {
     @Bean
     public ReactiveJwtDecoder entraJwtDecoder() {
         NimbusReactiveJwtDecoder decoder = NimbusReactiveJwtDecoder.withIssuerLocation(issuerUri).build();
-        OAuth2TokenValidator<Jwt> issuerValidator = JwtValidators.createDefaultWithIssuer(issuerUri);
+        Set<String> acceptedIssuers = acceptedIssuers(issuerUri);
+        OAuth2TokenValidator<Jwt> issuerValidator = new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefault(),
+                new JwtClaimValidator<String>(JwtClaimNames.ISS, acceptedIssuers::contains));
         // Los tokens v2 traen el client ID como aud; los v1 traen el Application ID URI (api://...).
         String clientId = audience.startsWith("api://") ? audience.substring("api://".length()) : audience;
         List<String> acceptedAudiences = List.of(clientId, "api://" + clientId);
@@ -71,6 +82,18 @@ public class EntraSecurityConfig {
         };
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(issuerValidator, audienceValidator));
         return decoder;
+    }
+
+    static Set<String> acceptedIssuers(String issuerUri) {
+        Matcher matcher = TENANT_ID.matcher(issuerUri);
+        if (!matcher.find()) {
+            return Set.of(issuerUri);
+        }
+        String tenantId = matcher.group();
+        return Set.copyOf(List.of(
+                issuerUri,
+                "https://sts.windows.net/" + tenantId + "/",
+                "https://login.microsoftonline.com/" + tenantId + "/v2.0"));
     }
 
     private ReactiveJwtAuthenticationConverterAdapter jwtAuthenticationConverter() {
