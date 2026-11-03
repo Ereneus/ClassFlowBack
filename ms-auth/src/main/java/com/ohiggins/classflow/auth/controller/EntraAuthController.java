@@ -13,6 +13,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -36,6 +37,26 @@ public class EntraAuthController {
     @GetMapping("/validate")
     public ResponseEntity<UserResponseDTO> validate(Authentication authentication) {
         return ResponseEntity.ok(resolveCurrentUser(authentication));
+    }
+
+    /**
+     * Lista usuarios, opcionalmente filtrados por rol y curso. Solo docentes y administradores,
+     * igual que en el modo local (AuthController).
+     */
+    @GetMapping("/users")
+    public ResponseEntity<List<UserResponseDTO>> listUsers(
+            @RequestParam(required = false) String role,
+            @RequestParam(required = false) String course,
+            Authentication authentication) {
+        UserResponseDTO currentUser = resolveCurrentUser(authentication);
+        if (!"ADMINISTRATOR".equals(currentUser.getRole()) && !"TEACHER".equals(currentUser.getRole())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Solo docentes y administradores pueden listar usuarios.");
+        }
+        try {
+            return ResponseEntity.ok(userService.findUsers(role, course));
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Rol inexistente: " + role);
+        }
     }
 
     @GetMapping("/users/{id}")

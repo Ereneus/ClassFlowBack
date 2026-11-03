@@ -1,0 +1,7 @@
+# Normaliza finales de linea: el repositorio guarda LF y cada sistema usa el suyo al hacer checkout.
+* text=auto
+
+# Scripts que deben conservar su final de linea en cualquier sistema.
+mvnw text eol=lf
+*.sh text eol=lf
+*.cmd text eol=crlf

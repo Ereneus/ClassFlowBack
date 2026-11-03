@@ -3,6 +3,7 @@ package com.ohiggins.classflow.message.service;
 import com.ohiggins.classflow.message.dto.AnnouncementDTO;
 import com.ohiggins.classflow.message.dto.AnnouncementRequestDTO;
 import com.ohiggins.classflow.message.entity.Announcement;
+import com.ohiggins.classflow.message.exception.ResourceNotFoundException;
 import com.ohiggins.classflow.message.repository.AnnouncementRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -79,7 +80,7 @@ public class AnnouncementService {
      */
     public void delete(Long id) {
         Announcement announcement = announcementRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Announcement not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Announcement not found"));
         announcement.setActive(false);
         announcementRepository.save(announcement);
     }

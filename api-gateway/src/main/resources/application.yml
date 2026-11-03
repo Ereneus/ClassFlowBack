@@ -46,7 +46,7 @@ spring:
         - id: ms-message
           uri: http://localhost:8084
           predicates:
-            - Path=/api/messages/**,/api/announcements/**
+            - Path=/api/messages/**,/api/announcements/**,/api/rabbitmq/**
           filters:
             - StripPrefix=0
         

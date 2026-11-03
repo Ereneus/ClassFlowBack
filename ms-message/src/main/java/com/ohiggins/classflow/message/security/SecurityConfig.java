@@ -45,6 +45,7 @@ public class SecurityConfig {
             .headers(headers -> headers.frameOptions(HeadersConfigurer.FrameOptionsConfig::disable))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                .requestMatchers("/api/rabbitmq/**").hasRole("ADMINISTRATOR")
                 // Bandejas: cada usuario solo las suyas (el administrador, todas).
                 .requestMatchers(HttpMethod.GET, "/api/messages/receiver/{userId}",
                         "/api/messages/receiver/{userId}/unread", "/api/messages/sender/{userId}")

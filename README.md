@@ -6,7 +6,12 @@ Proyecto backend compuesto por microservicios Spring Boot para gestionar funcion
 
 Frontend
 --------
-La carpeta `frontend/` contiene la SPA React/Vite integrada con Microsoft Entra ID mediante MSAL.
+La SPA React/Vite (integrada con Microsoft Entra ID mediante MSAL) vive en un repositorio aparte. `docker-compose.yml` la construye desde `../frontend`, así que debe clonarse como carpeta hermana de este repositorio:
+
+```
+ClassFlowBack/   <- este repositorio
+frontend/        <- repositorio del frontend
+```
 
 Ejecución conjunta con el frontend
 -----------------------------------
@@ -186,6 +191,30 @@ El perfil `entra` valida firma, issuer, expiración y audience del access token 
 
 El modo local solo se activa mediante una selección explícita del perfil `local`; no es el modo predeterminado.
 
+RabbitMQ y CloudAMQP
+--------------------
+- Configurar `RABBITMQ_URL` en `.env` con una URL AMQP privada. La URL no debe guardarse en `docker-compose.yml`, Git, Kubernetes ConfigMaps ni archivos README.
+- `ms-message` publica los eventos de mensajes creados. `ms-notification` consume esos eventos y crea alertas.
+- Si RabbitMQ no está disponible, el mensaje se guarda igual y el error de publicación queda en el log de `ms-message` (el evento no se reintenta).
+- Ambos servicios declaran el exchange, las colas y los bindings, así que pueden arrancar en cualquier orden.
+- Tras 3 intentos fallidos, `ms-notification` registra el error y el contenido, y el mensaje pasa por `classflow.dlx` a la DLQ `classflow.messages.dlq`, donde queda guardado para revisarlo desde la consola de CloudAMQP.
+- Los administradores pueden administrar AMQP (también a través del gateway) mediante:
+  - `POST/DELETE /api/rabbitmq/queues/{name}` (`?durable=true|false`)
+  - `POST/DELETE /api/rabbitmq/exchanges/{name}` (`?type=topic|direct|fanout|headers&durable=true|false`)
+  - `POST/DELETE /api/rabbitmq/bindings/{exchange}/{queue}` (`?routingKey=...`)
+
+  Los nombres admiten letras, números y `. _ : -`. Los recursos de ClassFlow (`classflow.events`, `classflow.dlx`, `classflow.messages.created`, `classflow.messages.dlq`) están reservados y responden 409; sí se puede enlazar una cola propia a `classflow.events`. Si el broker no responde se devuelve 503.
+- Para Docker Compose, completar `RABBITMQ_URL` en `.env`. Sin ella el sistema funciona igual, pero no se generan alertas por mensaje.
+- Para Kubernetes, crear el secreto una sola vez (no está en `k8s/secret.yml` para que `kubectl apply` no sobrescriba la URL real):
+
+  ```bash
+  kubectl -n classflow create secret generic classflow-rabbitmq-secret \
+    --from-literal=RABBITMQ_URL='amqps://usuario:clave@host/vhost'
+  ```
+
+  La referencia es opcional: si el secreto no existe, los pods arrancan igual.
+- Sin broker, `/actuator/health` de `ms-message` y `ms-notification` informa `DOWN` por el componente `rabbit`; los probes de Kubernetes usan TCP y no se ven afectados.
+
 Bases de datos y migraciones
 ---------------------------
 - En desarrollo los servicios usan H2 en memoria. En Docker se usan contenedores Postgres dedicados por servicio (p. ej. `auth-db`).
@@ -290,6 +319,5 @@ Notas sobre perfiles y configuración
 -----------------------------------
 - Para ejecución dentro de Docker, los servicios usan `SPRING_PROFILES_ACTIVE=docker` (configuración en `application-docker.yml`).
 - No commits de secretos: sustituir `JWT_SECRET` y credenciales SMTP por variables de entorno o usar un vault.
-
 
 

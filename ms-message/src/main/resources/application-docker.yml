@@ -1,4 +1,6 @@
 spring:
+  rabbitmq:
+    addresses: ${RABBITMQ_URL:}
   datasource:
     url: jdbc:postgresql://message-db:5432/message_db
     driver-class-name: org.postgresql.Driver

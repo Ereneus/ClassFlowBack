@@ -3,6 +3,7 @@ package com.ohiggins.classflow.message.service;
 import com.ohiggins.classflow.message.dto.MessageDTO;
 import com.ohiggins.classflow.message.dto.MessageRequestDTO;
 import com.ohiggins.classflow.message.entity.Message;
+import com.ohiggins.classflow.message.event.RabbitMessageEvent;
 import com.ohiggins.classflow.message.repository.MessageRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,9 @@ class MessageServiceTest {
 
 	@Mock
 	private MessageRepository messageRepository;
+
+	@Mock
+	private RabbitMessageProducer rabbitMessageProducer;
 
 	@InjectMocks
 	private MessageService messageService;
@@ -102,6 +106,8 @@ class MessageServiceTest {
 		assertThat(saved.getRead()).isFalse();
 		assertThat(saved.getSentAt()).isNotNull();
 		assertThat(result.getSubject()).isEqualTo("Subject");
+		verify(rabbitMessageProducer).publishMessageCreated(
+				new RabbitMessageEvent(null, 10L, 20L, "Subject", "Body"));
 	}
 
 	@Test

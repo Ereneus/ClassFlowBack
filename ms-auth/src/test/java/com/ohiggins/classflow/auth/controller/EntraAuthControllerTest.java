@@ -14,9 +14,13 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -109,6 +113,52 @@ class EntraAuthControllerTest {
                 ResponseStatusException.class, () -> controller.getUserById(13L, authentication));
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
+    }
+
+    @Test
+    void teacherCanListUsersByRoleAndCourse() {
+        JwtAuthenticationToken authentication = authenticatedAs("TEACHER");
+        List<UserResponseDTO> students = List.of(UserResponseDTO.builder().id(10L).role("STUDENT").build());
+        when(userService.findUsers("STUDENT", "1° Medio")).thenReturn(students);
+
+        assertSame(students, controller.listUsers("STUDENT", "1° Medio", authentication).getBody());
+    }
+
+    @Test
+    void studentCannotListUsers() {
+        JwtAuthenticationToken authentication = authenticatedAs("STUDENT");
+
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class, () -> controller.listUsers(null, null, authentication));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
+        verify(userService, never()).findUsers(any(), any());
+    }
+
+    @Test
+    void unknownRoleFilterIsBadRequest() {
+        JwtAuthenticationToken authentication = authenticatedAs("ADMINISTRATOR");
+        when(userService.findUsers("PRINCIPAL", null)).thenThrow(new IllegalArgumentException("No enum constant"));
+
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class, () -> controller.listUsers("PRINCIPAL", null, authentication));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+    }
+
+    private JwtAuthenticationToken authenticatedAs(String role) {
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "none")
+                .claim("tid", "tenant-id")
+                .claim("oid", "object-id")
+                .claim("email", "user@classflow.cl")
+                .build();
+        User user = new User();
+        user.setActive(true);
+        when(externalIdentityService.resolveExistingUser("ENTRA", "tenant-id", "object-id", "user@classflow.cl"))
+                .thenReturn(user);
+        when(userService.convertToDTO(user)).thenReturn(UserResponseDTO.builder().id(1L).role(role).build());
+        return new JwtAuthenticationToken(jwt);
     }
 
     @Test

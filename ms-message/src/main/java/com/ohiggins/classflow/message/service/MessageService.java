@@ -3,6 +3,8 @@ package com.ohiggins.classflow.message.service;
 import com.ohiggins.classflow.message.dto.MessageDTO;
 import com.ohiggins.classflow.message.dto.MessageRequestDTO;
 import com.ohiggins.classflow.message.entity.Message;
+import com.ohiggins.classflow.message.event.RabbitMessageEvent;
+import com.ohiggins.classflow.message.exception.ResourceNotFoundException;
 import com.ohiggins.classflow.message.repository.MessageRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,7 @@ import java.util.stream.Collectors;
 public class MessageService {
     
     private final MessageRepository messageRepository;
+    private final RabbitMessageProducer rabbitMessageProducer;
     
     /**
      * Obtiene todos los mensajes.
@@ -82,6 +85,13 @@ public class MessageService {
         message.setSentAt(LocalDateTime.now());
         
         Message saved = messageRepository.save(message);
+        rabbitMessageProducer.publishMessageCreated(new RabbitMessageEvent(
+                saved.getId(),
+                saved.getSenderId(),
+                saved.getReceiverId(),
+                saved.getSubject(),
+                saved.getBody()
+        ));
         return convertToDTO(saved);
     }
 
@@ -94,7 +104,7 @@ public class MessageService {
     public MessageDTO findById(Long id) {
         return messageRepository.findById(id)
                 .map(this::convertToDTO)
-                .orElseThrow(() -> new RuntimeException("Message not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found"));
     }
 
     /**
@@ -105,7 +115,7 @@ public class MessageService {
      */
     public MessageDTO markAsRead(Long id) {
         Message message = messageRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Message not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Message not found"));
         message.setRead(true);
         Message updated = messageRepository.save(message);
         return convertToDTO(updated);
