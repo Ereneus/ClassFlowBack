@@ -1,5 +1,6 @@
 services:
   auth-db:
+    restart: unless-stopped
     image: postgres:15-alpine
     environment:
       POSTGRES_DB: auth_db
@@ -16,6 +17,7 @@ services:
       - classflow-back-net
 
   academic-db:
+    restart: unless-stopped
     image: postgres:15-alpine
     environment:
       POSTGRES_DB: academic_db
@@ -32,6 +34,7 @@ services:
       - classflow-back-net
 
   assistance-db:
+    restart: unless-stopped
     image: postgres:15-alpine
     environment:
       POSTGRES_DB: assistance_db
@@ -48,6 +51,7 @@ services:
       - classflow-back-net
 
   message-db:
+    restart: unless-stopped
     image: postgres:15-alpine
     environment:
       POSTGRES_DB: message_db
@@ -64,6 +68,7 @@ services:
       - classflow-back-net
 
   notification-db:
+    restart: unless-stopped
     image: postgres:15-alpine
     environment:
       POSTGRES_DB: notification_db
@@ -80,6 +85,7 @@ services:
       - classflow-back-net
 
   glitchtip-db:
+    restart: unless-stopped
     image: postgres:18
     environment:
       POSTGRES_HOST_AUTH_METHOD: "trust"
@@ -94,6 +100,7 @@ services:
       - classflow-back-net
 
   glitchtip-valkey:
+    restart: unless-stopped
     image: valkey/valkey:9
     networks:
       - classflow-back-net
@@ -101,6 +108,7 @@ services:
   # Error tracking self-hospedado (compatible con el SDK de Sentry). UI en http://localhost:8000.
   # La primera vez, crear una cuenta/organizacion/proyecto ahi y copiar el DSN a SENTRY_DSN en .env.
   glitchtip:
+    restart: unless-stopped
     image: glitchtip/glitchtip:6
     ports:
       - "8000:8000"
@@ -109,7 +117,7 @@ services:
       VALKEY_URL: redis://glitchtip-valkey:6379
       SECRET_KEY: "${GLITCHTIP_SECRET_KEY:?Definir GLITCHTIP_SECRET_KEY en backend/.env (openssl rand -hex 32)}"
       EMAIL_URL: consolemail://
-      GLITCHTIP_DOMAIN: http://localhost:8000
+      GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN:-http://localhost:8000}
       DEFAULT_FROM_EMAIL: glitchtip@classflow.cl
       ENABLE_ADMIN: "True"
       SERVER_ROLE: all_in_one
@@ -124,6 +132,7 @@ services:
       - classflow-back-net
 
   api-gateway:
+    restart: unless-stopped
     build: ./api-gateway
     image: api-gateway:local
     ports:
@@ -144,6 +153,7 @@ services:
       - classflow-back-net
 
   bff:
+    restart: unless-stopped
     build: ./bff
     image: bff:local
     environment:
@@ -161,6 +171,7 @@ services:
       - classflow-back-net
 
   ms-auth:
+    restart: unless-stopped
     build: ./ms-auth
     image: ms-auth:local
     environment:
@@ -177,6 +188,7 @@ services:
       - classflow-back-net
 
   ms-academic:
+    restart: unless-stopped
     build: ./ms-academic
     image: ms-academic:local
     environment:
@@ -189,6 +201,7 @@ services:
       - classflow-back-net
 
   ms-assistance:
+    restart: unless-stopped
     build: ./ms-assistance
     image: ms-assistance:local
     environment:
@@ -201,6 +214,7 @@ services:
       - classflow-back-net
 
   ms-message:
+    restart: unless-stopped
     build: ./ms-message
     image: ms-message:local
     environment:
@@ -214,6 +228,7 @@ services:
       - classflow-back-net
 
   ms-notification:
+    restart: unless-stopped
     build: ./ms-notification
     image: ms-notification:local
     environment:
@@ -229,19 +244,6 @@ services:
     depends_on:
       notification-db:
         condition: service_healthy
-    networks:
-      - classflow-back-net
-
-  frontend:
-    build:
-      context: ../frontend
-      args:
-        VITE_API_BASE_URL: http://localhost:8080/api
-    image: classflow-frontend:local
-    ports:
-      - "3000:80"
-    depends_on:
-      - api-gateway
     networks:
       - classflow-back-net
 

@@ -6,20 +6,17 @@ Proyecto backend compuesto por microservicios Spring Boot para gestionar funcion
 
 Frontend
 --------
-La SPA React/Vite (integrada con Microsoft Entra ID mediante MSAL) vive en un repositorio aparte. `docker-compose.yml` la construye desde `../frontend`, así que debe clonarse como carpeta hermana de este repositorio:
+La SPA React/Vite (integrada con Microsoft Entra ID mediante MSAL) vive en un repositorio aparte y se despliega por separado (en otra instancia). `docker-compose.yml` solo levanta el backend. El frontend debe compilarse con `VITE_API_BASE_URL` apuntando al API Gateway de este backend (`http://IP_O_DOMINIO_BACKEND:8080/api`).
 
-```
-ClassFlowBack/   <- este repositorio
-frontend/        <- repositorio del frontend
-```
-
-Ejecución conjunta con el frontend
------------------------------------
-Completa `.env` a partir de `.env.example`, incluyendo `VITE_ENTRA_CLIENT_ID` con el client ID de la aplicación SPA registrada en Entra, y levanta el stack desde la raíz:
+Ejecución
+---------
+Completa `.env` a partir de `.env.example` y levanta el stack desde la raíz:
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
+
+Todos los servicios usan `restart: unless-stopped`, por lo que vuelven a levantarse solos si se reinicia el servidor.
 
 Arquitectura y servicios
 ------------------------
