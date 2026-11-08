@@ -195,7 +195,9 @@ RabbitMQ
 - `ms-message` publica los eventos de mensajes creados. `ms-notification` consume esos eventos y crea alertas.
 - Si RabbitMQ no está disponible, el mensaje se guarda igual y el error de publicación queda en el log de `ms-message` (el evento no se reintenta).
 - Ambos servicios declaran el exchange, las colas y los bindings, así que pueden arrancar en cualquier orden.
-- Tras 3 intentos fallidos, `ms-notification` registra el error y el contenido, y el mensaje pasa por `classflow.dlx` a la DLQ `classflow.messages.dlq`, donde queda guardado para revisarlo desde el panel de RabbitMQ.
+- Los nombres de exchanges, colas y routing keys están centralizados en `application.properties` (`classflow.rabbitmq.*`) y se leen con `RabbitMqProperties` en ambos servicios.
+- `ms-notification` confirma cada mensaje de forma manual (`acknowledge-mode=manual`): `basicAck` si se procesa bien; `basicNack` sin reencolar si el evento es inválido; un error al procesar se reencola una vez y, si vuelve a fallar, se rechaza. Los mensajes rechazados pasan por `classflow.dlx` a la DLQ `classflow.messages.dlq`, donde quedan para revisarlos desde el panel de RabbitMQ.
+- La administración AMQP está encapsulada en `RabbitAdminService`; `RabbitMqAdminController` solo valida los parámetros (Bean Validation) y delega.
 - Los administradores pueden administrar AMQP (también a través del gateway) mediante:
   - `POST/DELETE /api/rabbitmq/queues/{name}` (`?durable=true|false`)
   - `POST/DELETE /api/rabbitmq/exchanges/{name}` (`?type=topic|direct|fanout|headers&durable=true|false`)

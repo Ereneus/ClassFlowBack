@@ -9,10 +9,12 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Convierte excepciones del servicio de mensajeria en respuestas uniformes.
@@ -79,6 +81,37 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<ErrorResponse> handleResponseStatus(ResponseStatusException ex, HttpServletRequest request) {
         return buildError(HttpStatus.valueOf(ex.getStatusCode().value()), ex.getReason(), request);
+    }
+
+    /**
+     * Convierte la validacion fallida de parametros (@PathVariable / @RequestParam) en un 400
+     * que indica cada parametro invalido y el motivo.
+     *
+     * @param ex excepcion capturada.
+     * @param request peticion HTTP en curso.
+     * @return respuesta HTTP 400 con el detalle de los parametros invalidos.
+     */
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ErrorResponse> handleMethodValidation(HandlerMethodValidationException ex,
+                                                               HttpServletRequest request) {
+        String detail = ex.getParameterValidationResults().stream()
+                .flatMap(result -> result.getResolvableErrors().stream()
+                        .map(error -> result.getMethodParameter().getParameterName() + ": " + error.getDefaultMessage()))
+                .collect(Collectors.joining("; "));
+        return buildError(HttpStatus.BAD_REQUEST, "Parametros invalidos: " + detail, request);
+    }
+
+    /**
+     * Convierte el intento de modificar un recurso RabbitMQ reservado en un error estandar.
+     *
+     * @param ex excepcion capturada.
+     * @param request peticion HTTP en curso.
+     * @return respuesta HTTP 409 con el detalle del error.
+     */
+    @ExceptionHandler(ReservedRabbitResourceException.class)
+    public ResponseEntity<ErrorResponse> handleReservedRabbitResource(ReservedRabbitResourceException ex,
+                                                                     HttpServletRequest request) {
+        return buildError(HttpStatus.CONFLICT, ex.getMessage(), request);
     }
 
     /**

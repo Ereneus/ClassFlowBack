@@ -1,11 +1,10 @@
 package com.ohiggins.classflow.message.controller;
 
+import com.ohiggins.classflow.message.exception.ReservedRabbitResourceException;
+import com.ohiggins.classflow.message.service.ExchangeType;
+import com.ohiggins.classflow.message.service.RabbitAdminService;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpConnectException;
-import org.springframework.amqp.core.AmqpAdmin;
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.Exchange;
-import org.springframework.amqp.core.Queue;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -16,8 +15,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.net.ConnectException;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -36,82 +35,91 @@ class RabbitMqAdminControllerTest {
 	private MockMvc mockMvc;
 
 	@MockitoBean
-	private AmqpAdmin amqpAdmin;
+	private RabbitAdminService rabbitAdminService;
 
 	@Test
-	void createQueueDeclaresDurableQueue() throws Exception {
+	void createQueueDelegatesToServiceAsDurable() throws Exception {
 		mockMvc.perform(post("/api/rabbitmq/queues/reportes"))
 				.andExpect(status().isCreated());
 
-		verify(amqpAdmin).declareQueue(argThat((Queue q) -> q.getName().equals("reportes") && q.isDurable()));
+		verify(rabbitAdminService).createQueue("reportes", true);
 	}
 
 	@Test
-	void deleteReservedQueueIsRejected() throws Exception {
-		mockMvc.perform(delete("/api/rabbitmq/queues/classflow.messages.created"))
-				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.status").value(409));
+	void createExchangeParsesTypeIgnoringCase() throws Exception {
+		mockMvc.perform(post("/api/rabbitmq/exchanges/auditoria").param("type", "FANOUT"))
+				.andExpect(status().isCreated());
 
-		verifyNoInteractions(amqpAdmin);
+		verify(rabbitAdminService).createExchange("auditoria", ExchangeType.FANOUT, true);
 	}
 
 	@Test
-	void deleteReservedExchangeIsRejected() throws Exception {
-		mockMvc.perform(delete("/api/rabbitmq/exchanges/classflow.events"))
-				.andExpect(status().isConflict());
+	void createBindingDelegatesRoutingKey() throws Exception {
+		mockMvc.perform(post("/api/rabbitmq/bindings/classflow.events/auditoria")
+						.param("routingKey", "message.*"))
+				.andExpect(status().isCreated());
 
-		verifyNoInteractions(amqpAdmin);
+		verify(rabbitAdminService).createBinding("classflow.events", "auditoria", "message.*");
 	}
 
 	@Test
-	void invalidNameIsRejected() throws Exception {
+	void deleteQueueReturnsNoContent() throws Exception {
+		mockMvc.perform(delete("/api/rabbitmq/queues/reportes"))
+				.andExpect(status().isNoContent());
+
+		verify(rabbitAdminService).deleteQueue("reportes");
+	}
+
+	@Test
+	void invalidQueueNameIsRejectedBeforeReachingService() throws Exception {
 		mockMvc.perform(post("/api/rabbitmq/queues/cola con espacios"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.status").value(400))
+				.andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("name")));
+
+		verifyNoInteractions(rabbitAdminService);
+	}
+
+	@Test
+	void tooLongQueueNameIsRejected() throws Exception {
+		mockMvc.perform(post("/api/rabbitmq/queues/" + "a".repeat(256)))
 				.andExpect(status().isBadRequest());
 
-		verifyNoInteractions(amqpAdmin);
+		verifyNoInteractions(rabbitAdminService);
 	}
 
 	@Test
 	void unknownExchangeTypeIsRejected() throws Exception {
 		mockMvc.perform(post("/api/rabbitmq/exchanges/auditoria").param("type", "otro"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("type")));
+
+		verifyNoInteractions(rabbitAdminService);
+	}
+
+	@Test
+	void invalidRoutingKeyIsRejected() throws Exception {
+		mockMvc.perform(post("/api/rabbitmq/bindings/classflow.events/auditoria")
+						.param("routingKey", "clave con espacios"))
 				.andExpect(status().isBadRequest());
 
-		verifyNoInteractions(amqpAdmin);
+		verifyNoInteractions(rabbitAdminService);
 	}
 
 	@Test
-	void createExchangeUsesRequestedType() throws Exception {
-		mockMvc.perform(post("/api/rabbitmq/exchanges/auditoria").param("type", "fanout"))
-				.andExpect(status().isCreated());
+	void reservedResourceReturns409() throws Exception {
+		doThrow(new ReservedRabbitResourceException("classflow.messages.created"))
+				.when(rabbitAdminService).deleteQueue("classflow.messages.created");
 
-		verify(amqpAdmin).declareExchange(argThat((Exchange e) -> e.getType().equals("fanout")));
-	}
-
-	@Test
-	void createBindingAllowsOwnQueueOnClassflowExchange() throws Exception {
-		mockMvc.perform(post("/api/rabbitmq/bindings/classflow.events/auditoria")
-						.param("routingKey", "message.*"))
-				.andExpect(status().isCreated());
-
-		verify(amqpAdmin).declareBinding(argThat((Binding b) ->
-				b.getExchange().equals("classflow.events")
-						&& b.getDestination().equals("auditoria")
-						&& b.getRoutingKey().equals("message.*")));
-	}
-
-	@Test
-	void deleteBindingOfReservedQueueIsRejected() throws Exception {
-		mockMvc.perform(delete("/api/rabbitmq/bindings/classflow.events/classflow.messages.created")
-						.param("routingKey", "message.created"))
-				.andExpect(status().isConflict());
-
-		verifyNoInteractions(amqpAdmin);
+		mockMvc.perform(delete("/api/rabbitmq/queues/classflow.messages.created"))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.status").value(409));
 	}
 
 	@Test
 	void brokerUnavailableReturns503() throws Exception {
 		doThrow(new AmqpConnectException(new ConnectException("refused")))
-				.when(amqpAdmin).declareQueue(any());
+				.when(rabbitAdminService).createQueue(anyString(), anyBoolean());
 
 		mockMvc.perform(post("/api/rabbitmq/queues/reportes"))
 				.andExpect(status().isServiceUnavailable())
