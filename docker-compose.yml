@@ -131,6 +131,26 @@ services:
     networks:
       - classflow-back-net
 
+  # Broker de mensajeria. AMQP (5672) solo dentro de la red de Docker; panel de
+  # administracion en http://<host>:15672 con RABBITMQ_USER / RABBITMQ_PASSWORD.
+  rabbitmq:
+    restart: unless-stopped
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-classflow}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Definir RABBITMQ_PASSWORD en backend/.env (openssl rand -hex 16)}
+    ports:
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+    networks:
+      - classflow-back-net
+
   api-gateway:
     restart: unless-stopped
     build: ./api-gateway
@@ -220,9 +240,11 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - SENTRY_DSN=${SENTRY_DSN:-}
-      - RABBITMQ_URL=${RABBITMQ_URL:-}
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq:5672
     depends_on:
       message-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - classflow-back-net
@@ -240,9 +262,11 @@ services:
       - MAIL_FROM=${MAIL_FROM}
       - SENTRY_DSN=${SENTRY_DSN:-}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Definir INTERNAL_API_KEY en backend/.env (openssl rand -hex 32)}
-      - RABBITMQ_URL=${RABBITMQ_URL:-}
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq:5672
     depends_on:
       notification-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - classflow-back-net
@@ -260,3 +284,4 @@ volumes:
   notification-postgres-data:
   glitchtip-postgres-data:
   glitchtip-uploads:
+  rabbitmq-data:

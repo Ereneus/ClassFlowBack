@@ -188,20 +188,20 @@ El perfil `entra` valida firma, issuer, expiración y audience del access token 
 
 El modo local solo se activa mediante una selección explícita del perfil `local`; no es el modo predeterminado.
 
-RabbitMQ y CloudAMQP
---------------------
-- Configurar `RABBITMQ_URL` en `.env` con una URL AMQP privada. La URL no debe guardarse en `docker-compose.yml`, Git, Kubernetes ConfigMaps ni archivos README.
+RabbitMQ
+--------
+- Docker Compose levanta el broker como el contenedor `rabbitmq` (`rabbitmq:3.13-management-alpine`). Definir `RABBITMQ_USER` y `RABBITMQ_PASSWORD` en `.env`; `ms-message` y `ms-notification` se conectan a `amqp://RABBITMQ_USER:RABBITMQ_PASSWORD@rabbitmq:5672` y esperan a que el broker esté sano antes de arrancar.
+- El puerto AMQP (5672) solo es accesible dentro de la red de Docker. El panel de administración queda en `http://<host>:15672`; en EC2, abrir ese puerto solo para la IP del administrador.
 - `ms-message` publica los eventos de mensajes creados. `ms-notification` consume esos eventos y crea alertas.
 - Si RabbitMQ no está disponible, el mensaje se guarda igual y el error de publicación queda en el log de `ms-message` (el evento no se reintenta).
 - Ambos servicios declaran el exchange, las colas y los bindings, así que pueden arrancar en cualquier orden.
-- Tras 3 intentos fallidos, `ms-notification` registra el error y el contenido, y el mensaje pasa por `classflow.dlx` a la DLQ `classflow.messages.dlq`, donde queda guardado para revisarlo desde la consola de CloudAMQP.
+- Tras 3 intentos fallidos, `ms-notification` registra el error y el contenido, y el mensaje pasa por `classflow.dlx` a la DLQ `classflow.messages.dlq`, donde queda guardado para revisarlo desde el panel de RabbitMQ.
 - Los administradores pueden administrar AMQP (también a través del gateway) mediante:
   - `POST/DELETE /api/rabbitmq/queues/{name}` (`?durable=true|false`)
   - `POST/DELETE /api/rabbitmq/exchanges/{name}` (`?type=topic|direct|fanout|headers&durable=true|false`)
   - `POST/DELETE /api/rabbitmq/bindings/{exchange}/{queue}` (`?routingKey=...`)
 
   Los nombres admiten letras, números y `. _ : -`. Los recursos de ClassFlow (`classflow.events`, `classflow.dlx`, `classflow.messages.created`, `classflow.messages.dlq`) están reservados y responden 409; sí se puede enlazar una cola propia a `classflow.events`. Si el broker no responde se devuelve 503.
-- Para Docker Compose, completar `RABBITMQ_URL` en `.env`. Sin ella el sistema funciona igual, pero no se generan alertas por mensaje.
 - Para Kubernetes, crear el secreto una sola vez (no está en `k8s/secret.yml` para que `kubectl apply` no sobrescriba la URL real):
 
   ```bash
