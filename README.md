@@ -190,8 +190,13 @@ El modo local solo se activa mediante una selección explícita del perfil `loca
 
 RabbitMQ
 --------
-- Docker Compose levanta el broker como el contenedor `rabbitmq` (`rabbitmq:3.13-management-alpine`). Definir `RABBITMQ_USER` y `RABBITMQ_PASSWORD` en `.env`; `ms-message` y `ms-notification` se conectan a `amqp://RABBITMQ_USER:RABBITMQ_PASSWORD@rabbitmq:5672` y esperan a que el broker esté sano antes de arrancar.
-- El puerto AMQP (5672) solo es accesible dentro de la red de Docker. El panel de administración queda en `http://<host>:15672`; en EC2, abrir ese puerto solo para la IP del administrador.
+- Docker Compose levanta un **cluster de 3 nodos** (`rabbitmq-1`, `rabbitmq-2`, `rabbitmq-3`, imagen `rabbitmq:3.13-management-alpine`) definido en `docker-compose.rabbitmq.yml` e incluido desde `docker-compose.yml`. Definir `RABBITMQ_USER`, `RABBITMQ_PASSWORD` y `RABBITMQ_ERLANG_COOKIE` en `.env`.
+  - Los nodos forman el cluster con *peer discovery* `classic_config` (`rabbitmq/rabbitmq.conf`), comparten la Erlang cookie y usan `cluster_partition_handling = pause_minority`.
+  - Las colas `classflow.messages.created` y `classflow.messages.dlq` son **quorum queues**: se replican en los 3 nodos, así que si cae uno no se pierden mensajes.
+  - `ms-message` y `ms-notification` reciben los 3 nodos en `RABBITMQ_URL` (separados por coma), eligen uno al azar (`address-shuffle-mode=random`) y reconectan a otro si se cae. Esperan a que los 3 nodos estén sanos antes de arrancar.
+  - Panel de administración: http://localhost:15672, 15673 y 15674 (uno por nodo; cualquiera muestra el cluster completo en *Overview → Nodes*).
+  - Verificar el cluster: `docker compose exec rabbitmq-1 rabbitmq-diagnostics cluster_status`.
+- El puerto AMQP (5672) solo es accesible dentro de la red de Docker. En EC2, abrir los puertos del panel (15672-15674) solo para la IP del administrador.
 - `ms-message` publica los eventos de mensajes creados. `ms-notification` consume esos eventos y crea alertas.
 - Si RabbitMQ no está disponible, el mensaje se guarda igual y el error de publicación queda en el log de `ms-message` (el evento no se reintenta).
 - Ambos servicios declaran el exchange, las colas y los bindings, así que pueden arrancar en cualquier orden.

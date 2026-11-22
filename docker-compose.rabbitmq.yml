@@ -1,0 +1,73 @@
+# Cluster RabbitMQ de 3 nodos. Se incluye desde docker-compose.yml.
+#
+# - Los nodos comparten la Erlang cookie (RABBITMQ_ERLANG_COOKIE) y forman el cluster con
+#   peer discovery classic_config (rabbitmq/rabbitmq.conf).
+# - Las colas de ClassFlow se declaran como quorum queues (replicadas en los 3 nodos),
+#   asi que un nodo caido no pierde mensajes ni corta el flujo.
+# - AMQP (5672) solo dentro de la red de Docker. Panel de administracion en
+#   http://<host>:15672 / 15673 / 15674 (uno por nodo) con RABBITMQ_USER / RABBITMQ_PASSWORD.
+
+x-rabbitmq-node: &rabbitmq-node
+  restart: unless-stopped
+  image: rabbitmq:3.13-management-alpine
+  healthcheck:
+    test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+    interval: 10s
+    timeout: 10s
+    retries: 12
+    start_period: 20s
+  networks:
+    - classflow-back-net
+
+x-rabbitmq-env: &rabbitmq-env
+  RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-classflow}
+  RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Definir RABBITMQ_PASSWORD en backend/.env (openssl rand -hex 16)}
+  RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:?Definir RABBITMQ_ERLANG_COOKIE en backend/.env (openssl rand -hex 32)}
+
+services:
+  rabbitmq-1:
+    <<: *rabbitmq-node
+    hostname: rabbitmq-1
+    environment:
+      <<: *rabbitmq-env
+      RABBITMQ_NODENAME: rabbit@rabbitmq-1
+    ports:
+      - "15672:15672"
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/10-classflow-cluster.conf:ro
+      - rabbitmq-1-data:/var/lib/rabbitmq
+
+  rabbitmq-2:
+    <<: *rabbitmq-node
+    hostname: rabbitmq-2
+    environment:
+      <<: *rabbitmq-env
+      RABBITMQ_NODENAME: rabbit@rabbitmq-2
+    ports:
+      - "15673:15672"
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/10-classflow-cluster.conf:ro
+      - rabbitmq-2-data:/var/lib/rabbitmq
+    depends_on:
+      rabbitmq-1:
+        condition: service_healthy
+
+  rabbitmq-3:
+    <<: *rabbitmq-node
+    hostname: rabbitmq-3
+    environment:
+      <<: *rabbitmq-env
+      RABBITMQ_NODENAME: rabbit@rabbitmq-3
+    ports:
+      - "15674:15672"
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/10-classflow-cluster.conf:ro
+      - rabbitmq-3-data:/var/lib/rabbitmq
+    depends_on:
+      rabbitmq-1:
+        condition: service_healthy
+
+volumes:
+  rabbitmq-1-data:
+  rabbitmq-2-data:
+  rabbitmq-3-data:
