@@ -1,0 +1,71 @@
+spring:
+  application:
+    name: ms-analytics
+
+  # ---------------------------------------------------------------------------
+  # Consumidor Kafka. Comun a local y Docker: en Docker KAFKA_BOOTSTRAP_SERVERS
+  # apunta a kafka-N:29092; en local a los listeners EXTERNAL (9092-9094).
+  # ---------------------------------------------------------------------------
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092,localhost:9093,localhost:9094}
+    client-id: ms-analytics
+    consumer:
+      # Grupo propio: recibe todos los eventos aunque ms-notification tambien los consuma.
+      group-id: classflow-analytics
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # El deserializer del valor (JSON tipado + ErrorHandlingDeserializer) lo define KafkaConsumerConfig.
+      isolation-level: read_committed
+      # Al reconstruir la proyeccion se leen lotes mas grandes.
+      max-poll-records: 200
+      properties:
+        partition.assignment.strategy: org.apache.kafka.clients.consumer.CooperativeStickyAssignor
+        session.timeout.ms: 45000
+        heartbeat.interval.ms: 3000
+        max.poll.interval.ms: 300000
+    listener:
+      concurrency: 3          # 1 hilo por particion
+      ack-mode: batch         # la proyeccion es idempotente: confirmar por lote es suficiente
+      missing-topics-fatal: false
+    # Productor usado solo para publicar en los DLT.
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 30000
+        max.block.ms: 5000
+
+classflow:
+  kafka:
+    topics:
+      grades: classflow.academic.grades
+      attendance: classflow.assistance.attendance
+    dlt-suffix: .DLT        # mensajes fallidos -> <topico>.DLT
+    retry:
+      max-attempts: 3
+      initial-interval-ms: 1000
+      multiplier: 2.0
+      max-interval-ms: 10000
+  analytics:
+    # Un estudiante con al menos 3 registros y asistencia bajo 85 % se reporta en riesgo.
+    attendance-risk-threshold: 85
+    attendance-risk-min-records: 3
+
+server:
+  port: 8087
+
+auth:
+  service:
+    url: ${AUTH_SERVICE_URL:http://localhost:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info"
+
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: local
+  exception-resolver-order: -2147483648

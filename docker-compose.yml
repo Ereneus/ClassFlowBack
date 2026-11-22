@@ -1,3 +1,12 @@
+# La plataforma Kafka (Zookeeper, 3 brokers, kafka-init y kafka-ui) vive en su propio archivo
+# para poder levantarla sola; se incluye aqui para que `docker compose up` arranque todo junto.
+# La red classflow-back-net se define en ese archivo.
+include:
+  - docker-compose.kafka.yml
+
+x-kafka-client-env: &kafka-client-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
+
 services:
   auth-db:
     restart: unless-stopped
@@ -169,6 +178,8 @@ services:
       - ms-assistance
       - ms-message
       - ms-notification
+      - ms-analytics
+      - ms-kafka-admin
     networks:
       - classflow-back-net
 
@@ -212,11 +223,14 @@ services:
     build: ./ms-academic
     image: ms-academic:local
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SENTRY_DSN=${SENTRY_DSN:-}
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       academic-db:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     networks:
       - classflow-back-net
 
@@ -225,11 +239,14 @@ services:
     build: ./ms-assistance
     image: ms-assistance:local
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SENTRY_DSN=${SENTRY_DSN:-}
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       assistance-db:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     networks:
       - classflow-back-net
 
@@ -254,27 +271,60 @@ services:
     build: ./ms-notification
     image: ms-notification:local
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - MAIL_HOST=${MAIL_HOST:-smtp.gmail.com}
-      - MAIL_PORT=${MAIL_PORT:-587}
-      - MAIL_USERNAME=${MAIL_USERNAME}
-      - MAIL_PASSWORD=${MAIL_PASSWORD}
-      - MAIL_FROM=${MAIL_FROM}
-      - SENTRY_DSN=${SENTRY_DSN:-}
-      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Definir INTERNAL_API_KEY en backend/.env (openssl rand -hex 32)}
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?Definir INTERNAL_API_KEY en backend/.env (openssl rand -hex 32)}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq:5672
     depends_on:
       notification-db:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     networks:
       - classflow-back-net
 
-networks:
-  classflow-back-net:
-    name: classflow-back-net
-    driver: bridge
+  # Consumidor analitico de los eventos Kafka (consumer group propio, estado en memoria
+  # reconstruible desde los topicos). Sin base de datos.
+  ms-analytics:
+    restart: unless-stopped
+    build: ./ms-analytics
+    image: ms-analytics:local
+    environment:
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - classflow-back-net
+
+  # Administrador de Kafka: topicos, configuraciones, particiones y consumer groups.
+  ms-kafka-admin:
+    restart: unless-stopped
+    build: ./ms-kafka-admin
+    image: ms-kafka-admin:local
+    environment:
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    networks:
+      - classflow-back-net
 
 volumes:
   auth-postgres-data:

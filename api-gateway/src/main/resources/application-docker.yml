@@ -47,6 +47,20 @@ spring:
           filters:
             - StripPrefix=0
 
+        - id: ms-analytics
+          uri: http://ms-analytics:8087
+          predicates:
+            - Path=/api/analytics/**
+          filters:
+            - StripPrefix=0
+
+        - id: ms-kafka-admin
+          uri: http://ms-kafka-admin:8088
+          predicates:
+            - Path=/api/kafka/**
+          filters:
+            - StripPrefix=0
+
 auth:
   service:
     url: ${AUTH_SERVICE_URL:http://ms-auth:8081}

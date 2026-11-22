@@ -3,11 +3,15 @@ package com.ohiggins.classflow.assistance.service;
 import com.ohiggins.classflow.assistance.dto.AttendanceDTO;
 import com.ohiggins.classflow.assistance.dto.AttendanceRequestDTO;
 import com.ohiggins.classflow.assistance.entity.Attendance;
+import com.ohiggins.classflow.assistance.event.AttendanceEvent;
+import com.ohiggins.classflow.assistance.event.AttendanceEventType;
+import com.ohiggins.classflow.assistance.messaging.AttendanceEventProducer;
 import com.ohiggins.classflow.assistance.repository.AttendanceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -23,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -31,6 +36,9 @@ class AttendanceServiceTest {
 
     @Mock
     private AttendanceRepository attendanceRepository;
+
+    @Mock
+    private AttendanceEventProducer attendanceEventProducer;
 
     @InjectMocks
     private AttendanceService attendanceService;
@@ -138,6 +146,14 @@ class AttendanceServiceTest {
 
         verify(attendanceRepository, times(1)).findByStudentId(101L);
         verify(attendanceRepository, times(1)).save(any(Attendance.class));
+
+        ArgumentCaptor<AttendanceEvent> event = ArgumentCaptor.forClass(AttendanceEvent.class);
+        verify(attendanceEventProducer).publish(event.capture());
+        assertThat(event.getValue().eventType()).isEqualTo(AttendanceEventType.ATTENDANCE_REGISTERED);
+        assertThat(event.getValue().studentId()).isEqualTo(101L);
+        assertThat(event.getValue().courseId()).isEqualTo(201L);
+        assertThat(event.getValue().present()).isTrue();
+        assertThat(event.getValue().eventId()).isNotBlank();
     }
 
     @Test
@@ -151,6 +167,7 @@ class AttendanceServiceTest {
 
         verify(attendanceRepository, times(1)).findByStudentId(101L);
         verify(attendanceRepository, never()).save(any(Attendance.class));
+        verifyNoInteractions(attendanceEventProducer);
     }
 
     @Test
@@ -183,6 +200,11 @@ class AttendanceServiceTest {
 
         verify(attendanceRepository, times(1)).findById(1L);
         verify(attendanceRepository, times(1)).save(any(Attendance.class));
+
+        ArgumentCaptor<AttendanceEvent> event = ArgumentCaptor.forClass(AttendanceEvent.class);
+        verify(attendanceEventProducer).publish(event.capture());
+        assertThat(event.getValue().eventType()).isEqualTo(AttendanceEventType.ATTENDANCE_UPDATED);
+        assertThat(event.getValue().present()).isFalse();
     }
 
     @Test

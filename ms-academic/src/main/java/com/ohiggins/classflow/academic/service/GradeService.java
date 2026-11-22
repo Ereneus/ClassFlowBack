@@ -3,6 +3,9 @@ package com.ohiggins.classflow.academic.service;
 import com.ohiggins.classflow.academic.dto.GradeDTO;
 import com.ohiggins.classflow.academic.entity.Evaluation;
 import com.ohiggins.classflow.academic.entity.Grade;
+import com.ohiggins.classflow.academic.event.GradeEvent;
+import com.ohiggins.classflow.academic.event.GradeEventType;
+import com.ohiggins.classflow.academic.messaging.GradeEventProducer;
 import com.ohiggins.classflow.academic.repository.EvaluationRepository;
 import com.ohiggins.classflow.academic.repository.GradeRepository;
 import lombok.RequiredArgsConstructor;
@@ -12,14 +15,16 @@ import java.util.stream.Collectors;
 
 /**
  * Contiene la logica de negocio para la gestion de calificaciones.
+ * Cada alta, cambio o baja de una nota se publica como {@link GradeEvent} en Kafka.
  */
 @Service
 @RequiredArgsConstructor
 public class GradeService {
-    
+
     private final GradeRepository gradeRepository;
     private final EvaluationRepository evaluationRepository;
-    
+    private final GradeEventProducer gradeEventProducer;
+
     /**
      * Obtiene todas las calificaciones con sus relaciones.
      *
@@ -89,6 +94,7 @@ public class GradeService {
         grade.setEvaluation(evaluation);
         
         Grade saved = gradeRepository.save(grade);
+        gradeEventProducer.publish(toEvent(GradeEventType.GRADE_CREATED, saved));
         return convertToDTO(saved);
     }
     
@@ -107,18 +113,35 @@ public class GradeService {
         grade.setObservations(dto.getObservations());
         
         Grade updated = gradeRepository.save(grade);
+        gradeEventProducer.publish(toEvent(GradeEventType.GRADE_UPDATED, updated));
         return convertToDTO(updated);
     }
-    
+
     /**
      * Elimina una calificacion por su identificador.
      *
      * @param id identificador de la calificacion.
      */
     public void delete(Long id) {
+        // Se lee antes de borrar para que el evento lleve el estudiante y la evaluacion.
+        gradeRepository.findById(id).ifPresent(grade ->
+                gradeEventProducer.publish(toEvent(GradeEventType.GRADE_DELETED, grade)));
         gradeRepository.deleteById(id);
     }
-    
+
+    private GradeEvent toEvent(GradeEventType type, Grade grade) {
+        Evaluation evaluation = grade.getEvaluation();
+        return GradeEvent.of(
+                type,
+                grade.getId(),
+                grade.getStudentId(),
+                evaluation != null ? evaluation.getId() : null,
+                evaluation != null ? evaluation.getName() : null,
+                evaluation != null && evaluation.getSubject() != null ? evaluation.getSubject().getId() : null,
+                grade.getScore(),
+                evaluation != null ? evaluation.getMaxScore() : null);
+    }
+
     private GradeDTO convertToDTO(Grade grade) {
         return GradeDTO.builder()
                 .id(grade.getId())

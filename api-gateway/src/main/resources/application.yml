@@ -58,6 +58,22 @@ spring:
           filters:
             - StripPrefix=0
 
+        # Analitica en streaming (consumidor Kafka)
+        - id: ms-analytics
+          uri: http://localhost:8087
+          predicates:
+            - Path=/api/analytics/**
+          filters:
+            - StripPrefix=0
+
+        # Administrador de Kafka
+        - id: ms-kafka-admin
+          uri: http://localhost:8088
+          predicates:
+            - Path=/api/kafka/**
+          filters:
+            - StripPrefix=0
+
 auth:
   service:
     url: ${AUTH_SERVICE_URL:http://localhost:8081}

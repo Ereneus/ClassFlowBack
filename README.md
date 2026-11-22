@@ -214,6 +214,62 @@ RabbitMQ
   La referencia es opcional: si el secreto no existe, los pods arrancan igual.
 - Sin broker, `/actuator/health` de `ms-message` y `ms-notification` informa `DOWN` por el componente `rabbit`; los probes de Kubernetes usan TCP y no se ven afectados.
 
+Kafka (streaming y analítica)
+-----------------------------
+Kafka complementa a RabbitMQ sin reemplazarlo: RabbitMQ sigue llevando los mensajes internos (comandos punto a punto con DLQ), y Kafka lleva el **flujo de eventos académicos**. Varios consumidores independientes leen ese flujo, y se puede volver a leer para reconstruir estado o hacer analítica.
+
+```
+ms-academic ──GradeEvent──►  classflow.academic.grades       ─┬─► ms-notification (group classflow-notification) ─► notificaciones
+ms-assistance ─AttendanceEvent► classflow.assistance.attendance ─┴─► ms-analytics    (group classflow-analytics)    ─► /api/analytics
+                                          │ fallos tras reintentos
+                                          └─► <topico>.DLT
+ms-kafka-admin ──AdminClient──► tópicos, configuraciones, particiones y consumer groups
+```
+
+**Infraestructura** ([docker-compose.kafka.yml](docker-compose.kafka.yml), que `docker-compose.yml` incluye):
+- Zookeeper y 3 brokers (`confluentinc/cp-kafka:7.7.1`). Desde Docker se accede por `kafka-N:29092` y desde el host por `localhost:9092-9094` (`KAFKA_EXTERNAL_HOST` en EC2). La creación automática de tópicos está desactivada.
+- `kafka-init` ejecuta [kafka/create-topics.sh](kafka/create-topics.sh). El script es idempotente: crea los tópicos o vuelve a aplicarles la configuración. También se puede correr a mano con `docker compose -f docker-compose.kafka.yml run --rm kafka-init`.
+- Kafka UI en `http://<host>:8090`. Pide usuario y clave: `KAFKA_UI_USER` / `KAFKA_UI_PASSWORD` en `.env`.
+
+```bash
+docker compose -f docker-compose.kafka.yml up -d   # solo la plataforma Kafka
+docker compose up -d --build                       # todo el backend
+```
+
+**Tópicos** (todos con 3 particiones, RF 3 y `min.insync.replicas=2`; los parámetros están en `kafka/create-topics.sh`):
+
+| Tópico | Key | Política | Motivo |
+|---|---|---|---|
+| `classflow.academic.grades` | `gradeId` | `compact,delete`, 180 días | Guarda el estado: conserva la última versión de cada nota |
+| `classflow.assistance.attendance` | `studentId` | `delete`, 30 días / 1 GiB | Bitácora de eventos, en orden por estudiante |
+| `*.DLT` | la del mensaje original | `delete`, 14 días | Mensajes defectuosos, guardados para analizarlos o reprocesarlos |
+
+**Productores** (`ms-academic`: `GradeEventProducer`; `ms-assistance`: `AttendanceEventProducer`):
+- Usan DTO tipados (`GradeEvent`, `AttendanceEvent`) serializados a JSON sin headers de tipo Java. Las fechas van en ISO-8601.
+- Configuración: `acks=all`, idempotencia, `lz4`, `linger.ms=10` y `max.block.ms=5000`. Si Kafka no responde, la operación HTTP no falla y el error queda en el log (best-effort, igual que con RabbitMQ).
+
+**Consumidores** (`@KafkaListener` con `ConsumerRecord`; la lógica de negocio está en servicios aparte):
+- `ms-notification` → `AcademicEventsKafkaListener` → `AcademicEventNotificationService`. Avisa al estudiante cuando se publica o corrige una nota, o cuando se registra una inasistencia.
+- `ms-analytics` → `AnalyticsKafkaListener` → `AcademicAnalyticsService`. Mantiene una proyección en memoria (idempotente, actualizada por id) que reconstruye al arrancar releyendo los tópicos. La expone en `GET /api/analytics/summary`, `/students/{id}/grades`, `/students/{id}/attendance`, `/subjects/{id}/grades`, `/courses/attendance` y `/courses/{id}/attendance` (para docentes y administradores).
+- **Consumer groups:** cada servicio tiene su grupo, así que los dos reciben todos los eventos y avanzan con offsets propios. Dentro de un grupo, `concurrency=3` asigna un hilo por partición. Si se levantan más instancias de `ms-notification`, se reparten las particiones (asignación `CooperativeStickyAssignor`).
+- **Errores** (`KafkaConsumerConfig`):
+  - `ErrorHandlingDeserializer` evita que un JSON corrupto detenga el consumidor.
+  - El payload se valida con Bean Validation.
+  - `DefaultErrorHandler` reintenta con backoff exponencial (1 s, 2 s, 4 s) y deja un log con tópico, partición y offset.
+  - Al agotar los reintentos, `DeadLetterPublishingRecoverer` publica el mensaje en `<tópico>.DLT` con headers que indican la causa. Los payloads inválidos y los JSON corruptos van directo al DLT, sin reintentos.
+
+**Administración** (`ms-kafka-admin`, puerto 8088, solo `ADMINISTRATOR`, también a través del gateway):
+- `GET /api/kafka/cluster`: brokers y controller.
+- `GET /api/kafka/topics` · `GET /api/kafka/topics/{name}?includeDefaults=true`: particiones, líder, réplicas, ISR y configuración.
+- `POST /api/kafka/topics` con `{"name","partitions","replicationFactor","configs":{...}}`.
+- `PATCH /api/kafka/topics/{name}/configs` con `{"set":{"retention.ms":"..."},"reset":["cleanup.policy"]}`.
+- `POST /api/kafka/topics/{name}/partitions` con `{"totalCount":6}`.
+- `DELETE /api/kafka/topics/{name}`. Los tópicos de ClassFlow y los internos (`__*`) están protegidos y responden 409.
+- `GET /api/kafka/consumer-groups` · `GET /api/kafka/consumer-groups/{id}`: miembros, particiones asignadas, offsets y lag.
+- `POST /api/kafka/consumer-groups/{id}/reset-offsets` con `{"topic","strategy":"EARLIEST|LATEST"}`. Solo funciona con el grupo detenido.
+- `DELETE /api/kafka/consumer-groups/{id}`.
+- Si el clúster no responde se devuelve 503. Los errores del broker se traducen así: 404 si no existe, 409 si hay conflicto y 400 si la configuración es inválida.
+
 Bases de datos y migraciones
 ---------------------------
 - En desarrollo los servicios usan H2 en memoria. En Docker se usan contenedores Postgres dedicados por servicio (p. ej. `auth-db`).

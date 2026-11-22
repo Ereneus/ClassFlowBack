@@ -3,12 +3,16 @@ package com.ohiggins.classflow.academic.service;
 import com.ohiggins.classflow.academic.dto.GradeDTO;
 import com.ohiggins.classflow.academic.entity.Evaluation;
 import com.ohiggins.classflow.academic.entity.Grade;
+import com.ohiggins.classflow.academic.event.GradeEvent;
+import com.ohiggins.classflow.academic.event.GradeEventType;
+import com.ohiggins.classflow.academic.messaging.GradeEventProducer;
 import com.ohiggins.classflow.academic.repository.EvaluationRepository;
 import com.ohiggins.classflow.academic.repository.GradeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -30,6 +34,9 @@ class GradeServiceTest {
 
     @Mock
     private EvaluationRepository evaluationRepository;
+
+    @Mock
+    private GradeEventProducer gradeEventProducer;
 
     @InjectMocks
     private GradeService gradeService;
@@ -171,6 +178,15 @@ class GradeServiceTest {
 
         verify(evaluationRepository, times(1)).findById(1L);
         verify(gradeRepository, times(1)).save(any());
+
+        ArgumentCaptor<GradeEvent> event = ArgumentCaptor.forClass(GradeEvent.class);
+        verify(gradeEventProducer).publish(event.capture());
+        assertThat(event.getValue().eventType()).isEqualTo(GradeEventType.GRADE_CREATED);
+        assertThat(event.getValue().gradeId()).isEqualTo(3L);
+        assertThat(event.getValue().studentId()).isEqualTo(103L);
+        assertThat(event.getValue().maxScore()).isEqualTo(100.0);
+        assertThat(event.getValue().evaluationName()).isEqualTo("Test 1");
+        assertThat(event.getValue().eventId()).isNotBlank();
     }
 
     @Test
@@ -192,6 +208,21 @@ class GradeServiceTest {
 
         verify(evaluationRepository, times(1)).findById(1L);
         verify(gradeRepository, never()).save(any());
+        verifyNoInteractions(gradeEventProducer);
+    }
+
+    @Test
+    @DisplayName("Should publish GRADE_UPDATED when a grade changes")
+    void testUpdatePublishesEvent() {
+        when(gradeRepository.findById(1L)).thenReturn(Optional.of(grade));
+        when(gradeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        gradeService.update(1L, GradeDTO.builder().score(70.0).observations("Revisada").build());
+
+        ArgumentCaptor<GradeEvent> event = ArgumentCaptor.forClass(GradeEvent.class);
+        verify(gradeEventProducer).publish(event.capture());
+        assertThat(event.getValue().eventType()).isEqualTo(GradeEventType.GRADE_UPDATED);
+        assertThat(event.getValue().score()).isEqualTo(70.0);
     }
 
     @Test
@@ -226,5 +257,20 @@ class GradeServiceTest {
 
         // Then
         verify(gradeRepository, times(1)).deleteById(1L);
+        verifyNoInteractions(gradeEventProducer);
+    }
+
+    @Test
+    @DisplayName("Should publish GRADE_DELETED with the deleted grade data")
+    void testDeletePublishesEvent() {
+        when(gradeRepository.findById(1L)).thenReturn(Optional.of(grade));
+
+        gradeService.delete(1L);
+
+        ArgumentCaptor<GradeEvent> event = ArgumentCaptor.forClass(GradeEvent.class);
+        verify(gradeEventProducer).publish(event.capture());
+        assertThat(event.getValue().eventType()).isEqualTo(GradeEventType.GRADE_DELETED);
+        assertThat(event.getValue().studentId()).isEqualTo(101L);
+        verify(gradeRepository).deleteById(1L);
     }
 }
