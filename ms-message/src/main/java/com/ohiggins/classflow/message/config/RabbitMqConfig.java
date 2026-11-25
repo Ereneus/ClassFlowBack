@@ -30,11 +30,9 @@ public class RabbitMqConfig {
         return new TopicExchange(props.deadLetterExchange(), true, false);
     }
 
-    // Quorum queues: replicadas en los nodos del cluster (Raft), sobreviven a la caida de un nodo.
     @Bean
     public Queue messageCreatedQueue(RabbitMqProperties props) {
         return QueueBuilder.durable(props.messageCreatedQueue())
-                .quorum()
                 .withArgument("x-dead-letter-exchange", props.deadLetterExchange())
                 .withArgument("x-dead-letter-routing-key", props.deadLetterQueue())
                 .build();
@@ -42,7 +40,7 @@ public class RabbitMqConfig {
 
     @Bean
     public Queue deadLetterQueue(RabbitMqProperties props) {
-        return QueueBuilder.durable(props.deadLetterQueue()).quorum().build();
+        return QueueBuilder.durable(props.deadLetterQueue()).build();
     }
 
     @Bean

@@ -1,22 +1,20 @@
 # La plataforma Kafka (Zookeeper, 3 brokers, kafka-init y kafka-ui) y el cluster RabbitMQ
-# (3 nodos) viven en sus propios archivos para poder levantarlos solos; se incluyen aqui
+# (2 nodos) viven en sus propios archivos para poder levantarlos solos; se incluyen aqui
 # para que `docker compose up` arranque todo junto.
 # La red classflow-back-net se define en docker-compose.kafka.yml.
 include:
   - docker-compose.kafka.yml
   - docker-compose.rabbitmq.yml
 
-# Los clientes AMQP conocen los 3 nodos y se conectan a uno al azar; si ese nodo cae,
+# Los clientes AMQP conocen los 2 nodos y se conectan a uno al azar; si ese nodo cae,
 # Spring reconecta al siguiente de la lista.
 x-rabbitmq-addresses: &rabbitmq-addresses >-
-  amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq-1:5672,amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq-2:5672,amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq-3:5672
+  amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq-1:5672,amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq-2:5672
 
 x-rabbitmq-depends-on: &rabbitmq-depends-on
   rabbitmq-1:
     condition: service_healthy
   rabbitmq-2:
-    condition: service_healthy
-  rabbitmq-3:
     condition: service_healthy
 
 x-kafka-client-env: &kafka-client-env
