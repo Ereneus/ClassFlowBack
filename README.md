@@ -232,7 +232,8 @@ ms-kafka-admin ──AdminClient──► tópicos, configuraciones, particiones
 ```
 
 **Infraestructura** ([docker-compose.kafka.yml](docker-compose.kafka.yml), que `docker-compose.yml` incluye):
-- Zookeeper y 3 brokers (`confluentinc/cp-kafka:7.7.1`). Desde Docker se accede por `kafka-N:29092` y desde el host por `localhost:9092-9094` (`KAFKA_EXTERNAL_HOST` en EC2). La creación automática de tópicos está desactivada.
+- **Ensemble de 3 Zookeeper** (`zookeeper-1..3`, `confluentinc/cp-zookeeper:7.7.1`): guardan los metadatos del cluster (brokers vivos, tópicos, configuración) y eligen el broker *controller*. Con 3 nodos el quorum es 2, así que el cluster sigue operando si cae uno. Cada nodo se marca sano solo cuando ya está en el quorum (`srvr` → `Mode: leader|follower`). Ver el rol de cada uno: `docker compose exec zookeeper-1 bash -c "echo srvr | nc localhost 2181"`.
+- 3 brokers (`confluentinc/cp-kafka:7.7.1`) conectados a los 3 Zookeeper. Desde Docker se accede por `kafka-N:29092` y desde el host por `localhost:9092-9094` (`KAFKA_EXTERNAL_HOST` en EC2). La creación automática de tópicos está desactivada.
 - `kafka-init` ejecuta [kafka/create-topics.sh](kafka/create-topics.sh). El script es idempotente: crea los tópicos o vuelve a aplicarles la configuración. También se puede correr a mano con `docker compose -f docker-compose.kafka.yml run --rm kafka-init`.
 - Kafka UI en `http://<host>:8090`. Pide usuario y clave: `KAFKA_UI_USER` / `KAFKA_UI_PASSWORD` en `.env`.
 

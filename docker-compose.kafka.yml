@@ -1,7 +1,8 @@
 # =============================================================================
 # Plataforma de streaming Kafka de ClassFlow
 #
-#   zookeeper      coordinacion del cluster (metadatos, eleccion de controller)
+#   zookeeper-1..3 ensemble de 3 nodos: guarda los metadatos del cluster y elige el
+#                  controller. Con 3 nodos el quorum es 2, asi que tolera la caida de 1.
 #   kafka-1..3     3 brokers -> permite replication-factor 3 y min.insync.replicas 2
 #   kafka-init     contenedor de un solo uso que crea/ajusta los topicos (kafka/create-topics.sh)
 #   kafka-ui       consola web para administrar brokers, topicos y consumer groups
@@ -20,13 +21,42 @@ x-kafka-broker: &kafka-broker
   image: confluentinc/cp-kafka:7.7.1
   restart: unless-stopped
   depends_on:
-    zookeeper:
+    zookeeper-1:
+      condition: service_healthy
+    zookeeper-2:
+      condition: service_healthy
+    zookeeper-3:
       condition: service_healthy
   networks:
     - classflow-back-net
 
+x-zookeeper-node: &zookeeper-node
+  image: confluentinc/cp-zookeeper:7.7.1
+  restart: unless-stopped
+  # Sano solo cuando el nodo forma parte del quorum (leader o follower), no con solo arrancar.
+  healthcheck:
+    test: ["CMD-SHELL", "echo srvr | nc -w 2 localhost 2181 | grep -qE 'Mode: (leader|follower)'"]
+    interval: 10s
+    timeout: 5s
+    retries: 12
+    start_period: 15s
+  networks:
+    - classflow-back-net
+
+x-zookeeper-common-env: &zookeeper-common-env
+  ZOOKEEPER_CLIENT_PORT: 2181
+  ZOOKEEPER_TICK_TIME: 2000
+  # Ticks que un follower tiene para conectarse y sincronizarse con el leader (init)
+  # y para seguir sincronizado (sync).
+  ZOOKEEPER_INIT_LIMIT: 5
+  ZOOKEEPER_SYNC_LIMIT: 2
+  # Miembros del ensemble: host:puerto_seguidores:puerto_eleccion_de_leader.
+  ZOOKEEPER_SERVERS: zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888
+  KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=srvr,ruok,mntr"
+  KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+
 x-kafka-common-env: &kafka-common-env
-  KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181
   KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
   KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
   # Topicos internos (__consumer_offsets, __transaction_state) replicados en los 3 brokers.
@@ -45,23 +75,35 @@ x-kafka-common-env: &kafka-common-env
   KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
 
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.7.1
-    restart: unless-stopped
+  zookeeper-1:
+    <<: *zookeeper-node
+    hostname: zookeeper-1
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-      KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+      <<: *zookeeper-common-env
+      ZOOKEEPER_SERVER_ID: 1
     volumes:
-      - zookeeper-data:/var/lib/zookeeper/data
-      - zookeeper-log:/var/lib/zookeeper/log
-    healthcheck:
-      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    networks:
-      - classflow-back-net
+      - zookeeper-1-data:/var/lib/zookeeper/data
+      - zookeeper-1-log:/var/lib/zookeeper/log
+
+  zookeeper-2:
+    <<: *zookeeper-node
+    hostname: zookeeper-2
+    environment:
+      <<: *zookeeper-common-env
+      ZOOKEEPER_SERVER_ID: 2
+    volumes:
+      - zookeeper-2-data:/var/lib/zookeeper/data
+      - zookeeper-2-log:/var/lib/zookeeper/log
+
+  zookeeper-3:
+    <<: *zookeeper-node
+    hostname: zookeeper-3
+    environment:
+      <<: *zookeeper-common-env
+      ZOOKEEPER_SERVER_ID: 3
+    volumes:
+      - zookeeper-3-data:/var/lib/zookeeper/data
+      - zookeeper-3-log:/var/lib/zookeeper/log
 
   kafka-1:
     <<: *kafka-broker
@@ -159,7 +201,7 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: classflow
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181
       # Permite editar la configuracion de clusters desde la propia UI.
       DYNAMIC_CONFIG_ENABLED: "true"
       AUTH_TYPE: LOGIN_FORM
@@ -174,8 +216,12 @@ networks:
     driver: bridge
 
 volumes:
-  zookeeper-data:
-  zookeeper-log:
+  zookeeper-1-data:
+  zookeeper-1-log:
+  zookeeper-2-data:
+  zookeeper-2-log:
+  zookeeper-3-data:
+  zookeeper-3-log:
   kafka-1-data:
   kafka-2-data:
   kafka-3-data:
