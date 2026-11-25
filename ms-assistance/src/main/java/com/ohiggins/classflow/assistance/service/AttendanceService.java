@@ -3,6 +3,9 @@ package com.ohiggins.classflow.assistance.service;
 import com.ohiggins.classflow.assistance.dto.AttendanceDTO;
 import com.ohiggins.classflow.assistance.dto.AttendanceRequestDTO;
 import com.ohiggins.classflow.assistance.entity.Attendance;
+import com.ohiggins.classflow.assistance.event.AttendanceEvent;
+import com.ohiggins.classflow.assistance.event.AttendanceEventType;
+import com.ohiggins.classflow.assistance.messaging.AttendanceEventProducer;
 import com.ohiggins.classflow.assistance.repository.AttendanceRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -12,13 +15,15 @@ import java.util.stream.Collectors;
 
 /**
  * Contiene la logica de negocio para la gestion de asistencia diaria.
+ * Cada registro o correccion se publica como {@link AttendanceEvent} en Kafka.
  */
 @Service
 @RequiredArgsConstructor
 public class AttendanceService {
-    
+
     private final AttendanceRepository attendanceRepository;
-    
+    private final AttendanceEventProducer attendanceEventProducer;
+
     /**
      * Obtiene todos los registros de asistencia.
      *
@@ -80,6 +85,7 @@ public class AttendanceService {
         attendance.setJustification(request.getJustification());
         
         Attendance saved = attendanceRepository.save(attendance);
+        attendanceEventProducer.publish(toEvent(AttendanceEventType.ATTENDANCE_REGISTERED, saved));
         return convertToDTO(saved);
     }
     
@@ -98,9 +104,15 @@ public class AttendanceService {
         attendance.setJustification(request.getJustification());
         
         Attendance updated = attendanceRepository.save(attendance);
+        attendanceEventProducer.publish(toEvent(AttendanceEventType.ATTENDANCE_UPDATED, updated));
         return convertToDTO(updated);
     }
-    
+
+    private AttendanceEvent toEvent(AttendanceEventType type, Attendance attendance) {
+        return AttendanceEvent.of(type, attendance.getId(), attendance.getStudentId(), attendance.getCourseId(),
+                attendance.getDate(), attendance.getPresent(), attendance.getJustification());
+    }
+
     private AttendanceDTO convertToDTO(Attendance attendance) {
         return AttendanceDTO.builder()
                 .id(attendance.getId())

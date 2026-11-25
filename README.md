@@ -8,11 +8,27 @@ Frontend
 --------
 La SPA React/Vite (integrada con Microsoft Entra ID mediante MSAL) vive en un repositorio aparte y se despliega por separado (en otra instancia). `docker-compose.yml` solo levanta el backend. El frontend debe compilarse con `VITE_API_BASE_URL` apuntando al API Gateway de este backend (`http://IP_O_DOMINIO_BACKEND:8080/api`).
 
+Repositorios relacionados
+-------------------------
+La mensajería se versiona y se levanta aparte del backend:
+
+| Repositorio | Contenido |
+|---|---|
+| [ClassFlowKafka](https://github.com/Ereneus/ClassFlowKafka) | 3 Zookeeper, 3 brokers Kafka, creación de tópicos y Kafka UI |
+| [ClassFlowRabbitMQ](https://github.com/Ereneus/ClassFlowRabbitMQ) | Cluster RabbitMQ de 2 nodos |
+| [ClassFlowFront](https://github.com/Ereneus/ClassFlowFront) | Frontend React/Vite |
+
+Los tres stacks de Docker Compose comparten la red externa `classflow-back-net`. Los microservicios llegan a los brokers por nombre (`kafka-1..3:29092`, `rabbitmq-1..2:5672`).
+
 Ejecución
 ---------
-Completa `.env` a partir de `.env.example` y levanta el stack desde la raíz:
+Orden recomendado. Los microservicios reintentan la conexión a Kafka y RabbitMQ, así que no es obligatorio.
 
 ```bash
+docker network create classflow-back-net          # una vez por host
+# 1) en ClassFlowKafka:     docker compose up -d
+# 2) en ClassFlowRabbitMQ:  docker compose up -d
+# 3) aquí (completar .env a partir de .env.example; RABBITMQ_USER/PASSWORD iguales a ClassFlowRabbitMQ):
 docker compose up -d --build
 ```
 
@@ -190,8 +206,8 @@ El modo local solo se activa mediante una selección explícita del perfil `loca
 
 RabbitMQ
 --------
-- Docker Compose levanta el broker como el contenedor `rabbitmq` (`rabbitmq:3.13-management-alpine`). Definir `RABBITMQ_USER` y `RABBITMQ_PASSWORD` en `.env`; `ms-message` y `ms-notification` se conectan a `amqp://RABBITMQ_USER:RABBITMQ_PASSWORD@rabbitmq:5672` y esperan a que el broker esté sano antes de arrancar.
-- El puerto AMQP (5672) solo es accesible dentro de la red de Docker. El panel de administración queda en `http://<host>:15672`; en EC2, abrir ese puerto solo para la IP del administrador.
+- El cluster de 2 nodos (`rabbitmq-1`, `rabbitmq-2`, la base de la EP2) está en el repositorio [ClassFlowRabbitMQ](https://github.com/Ereneus/ClassFlowRabbitMQ), junto con su configuración, paneles de administración y pruebas.
+- `ms-message` y `ms-notification` reciben los 2 nodos en `RABBITMQ_URL` (separados por coma), eligen uno al azar (`address-shuffle-mode=random`) y reconectan al otro si se cae. `RABBITMQ_USER` y `RABBITMQ_PASSWORD` del `.env` deben coincidir con los de ClassFlowRabbitMQ.
 - `ms-message` publica los eventos de mensajes creados. `ms-notification` consume esos eventos y crea alertas.
 - Si RabbitMQ no está disponible, el mensaje se guarda igual y el error de publicación queda en el log de `ms-message` (el evento no se reintenta).
 - Ambos servicios declaran el exchange, las colas y los bindings, así que pueden arrancar en cualquier orden.
@@ -213,6 +229,118 @@ RabbitMQ
 
   La referencia es opcional: si el secreto no existe, los pods arrancan igual.
 - Sin broker, `/actuator/health` de `ms-message` y `ms-notification` informa `DOWN` por el componente `rabbit`; los probes de Kubernetes usan TCP y no se ven afectados.
+
+Kafka (streaming y analítica)
+-----------------------------
+Kafka complementa a RabbitMQ sin reemplazarlo: RabbitMQ sigue llevando los mensajes internos (comandos punto a punto con DLQ), y Kafka lleva el **flujo de eventos académicos**. Varios consumidores independientes leen ese flujo, y se puede volver a leer para reconstruir estado o hacer analítica.
+
+```
+ms-academic ──GradeEvent──►  classflow.academic.grades       ─┬─► ms-notification (group classflow-notification) ─► notificaciones
+ms-assistance ─AttendanceEvent► classflow.assistance.attendance ─┴─► ms-analytics    (group classflow-analytics)    ─► /api/analytics
+                                          │ fallos tras reintentos
+                                          └─► <topico>.DLT
+ms-kafka-admin ──AdminClient──► tópicos, configuraciones, particiones y consumer groups
+```
+
+**Infraestructura:** el cluster (3 Zookeeper, 3 brokers, `kafka-init` con el script de tópicos y Kafka UI) está en el repositorio [ClassFlowKafka](https://github.com/Ereneus/ClassFlowKafka). Su README explica el rol de cada nodo, los listeners, la creación de tópicos y los comandos de supervisión. Los microservicios se conectan con `KAFKA_BOOTSTRAP_SERVERS` (por defecto `kafka-1:29092,kafka-2:29092,kafka-3:29092`).
+
+**Tópicos** (todos con 3 particiones, RF 3 y `min.insync.replicas=2`; los parámetros están en `kafka/create-topics.sh` de ClassFlowKafka):
+
+| Tópico | Key | Política | Motivo |
+|---|---|---|---|
+| `classflow.academic.grades` | `gradeId` | `compact,delete`, 180 días | Guarda el estado: conserva la última versión de cada nota |
+| `classflow.assistance.attendance` | `studentId` | `delete`, 30 días / 1 GiB | Bitácora de eventos, en orden por estudiante |
+| `*.DLT` | la del mensaje original | `delete`, 14 días | Mensajes defectuosos, guardados para analizarlos o reprocesarlos |
+
+**Estructura de los eventos**
+
+Los eventos son `record` de Java. El productor los define en `event/` y cada consumidor tiene su propia copia en `kafka/event/`, con Bean Validation. Viajan como JSON plano, sin headers de tipo Java, así que un consumidor en otro lenguaje los puede leer igual. Los instantes van en ISO-8601 UTC y las fechas como `YYYY-MM-DD`. Todos los eventos comparten tres campos: `eventId`, `eventType` y `occurredAt`.
+
+`GradeEvent`: tópico `classflow.academic.grades`, key `gradeId`. Lo publica `GradeService` (ms-academic) al crear, corregir o eliminar una nota.
+
+| Campo | Tipo | Obligatorio | Para qué sirve |
+|---|---|---|---|
+| `eventId` | `String` (UUID) | Sí | Identifica el evento. Aparece en los logs de productor y consumidores para seguirlo de punta a punta. |
+| `eventType` | `GRADE_CREATED` \| `GRADE_UPDATED` \| `GRADE_DELETED` | Sí | Qué pasó con la nota. ms-notification avisa en `CREATED` y `UPDATED`; ms-analytics quita la nota en `DELETED`. |
+| `gradeId` | `Long` | Sí | Nota afectada. Es la key: todas las versiones de una nota van a la misma partición, en orden, y la compactación conserva la última. |
+| `studentId` | `Long` | Sí | Estudiante calificado: a quién notificar y con qué promedio agrupar. |
+| `evaluationId` | `Long` | No | Evaluación de la nota. |
+| `evaluationName` | `String` | No | Nombre de la evaluación. Va dentro del evento para que el consumidor arme el aviso sin consultar ms-academic. |
+| `subjectId` | `Long` | No | Asignatura. Con este campo ms-analytics calcula el promedio por asignatura. |
+| `score` | `Double` (≥ 0) | No | Nota obtenida. |
+| `maxScore` | `Double` (≥ 0) | No | Nota máxima de la evaluación, para calcular el porcentaje de logro. |
+| `occurredAt` | `Instant` | Sí | Cuándo ocurrió el cambio. ms-analytics descarta un evento más antiguo que el estado que ya tiene, por ejemplo al releer el tópico. |
+
+```json
+{
+  "eventId": "3f6c2a9e-8d0b-4b7e-9a51-2c1f0e7d4b10",
+  "eventType": "GRADE_CREATED",
+  "gradeId": 42,
+  "studentId": 7,
+  "evaluationId": 3,
+  "evaluationName": "Prueba 1",
+  "subjectId": 2,
+  "score": 6.5,
+  "maxScore": 7.0,
+  "occurredAt": "2026-11-25T16:20:00.123Z"
+}
+```
+
+`AttendanceEvent`: tópico `classflow.assistance.attendance`, key `studentId`. Lo publica `AttendanceService` (ms-assistance) al registrar o corregir una asistencia.
+
+| Campo | Tipo | Obligatorio | Para qué sirve |
+|---|---|---|---|
+| `eventId` | `String` (UUID) | Sí | Identifica el evento en los logs. |
+| `eventType` | `ATTENDANCE_REGISTERED` \| `ATTENDANCE_UPDATED` | Sí | Registro nuevo o corrección de uno existente. |
+| `attendanceId` | `Long` | Sí | Registro afectado. ms-analytics actualiza por este id, así que una corrección reemplaza al registro anterior en vez de sumarse. |
+| `studentId` | `Long` | Sí | Estudiante. Es la key: los eventos de un estudiante van a la misma partición y se procesan en orden. |
+| `courseId` | `Long` | Sí | Curso, para la asistencia por curso. |
+| `date` | `LocalDate` | Sí | Día de clases. |
+| `present` | `Boolean` | Sí | Si asistió. ms-notification solo avisa las ausencias. |
+| `justification` | `String` | No | Justificación de la ausencia. Cambia el texto del aviso y cuenta como ausencia justificada en la analítica. |
+| `occurredAt` | `Instant` | Sí | Cuándo ocurrió el cambio (mismo uso que en `GradeEvent`). |
+
+```json
+{
+  "eventId": "b1e0d7c4-5a2f-4f0e-8c3d-6a9b7e2f1d05",
+  "eventType": "ATTENDANCE_REGISTERED",
+  "attendanceId": 118,
+  "studentId": 7,
+  "courseId": 1,
+  "date": "2026-11-25",
+  "present": false,
+  "justification": null,
+  "occurredAt": "2026-11-25T11:05:42.871Z"
+}
+```
+
+Un evento al que le falta un campo obligatorio no se reintenta: va directo a `<tópico>.DLT`.
+
+**Productores** (`ms-academic`: `GradeEventProducer`; `ms-assistance`: `AttendanceEventProducer`):
+- Usan DTO tipados (`GradeEvent`, `AttendanceEvent`) serializados a JSON sin headers de tipo Java. Las fechas van en ISO-8601.
+- Configuración: `acks=all`, idempotencia, `lz4`, `linger.ms=10` y `max.block.ms=5000`. Si Kafka no responde, la operación HTTP no falla y el error queda en el log (best-effort, igual que con RabbitMQ).
+
+**Consumidores** (`@KafkaListener` con `ConsumerRecord`; la lógica de negocio está en servicios aparte):
+- `ms-notification` → `AcademicEventsKafkaListener` → `AcademicEventNotificationService`. Avisa al estudiante cuando se publica o corrige una nota, o cuando se registra una inasistencia.
+- `ms-analytics` → `AnalyticsKafkaListener` → `AcademicAnalyticsService`. Mantiene una proyección en memoria (idempotente, actualizada por id) que reconstruye al arrancar releyendo los tópicos. La expone en `GET /api/analytics/summary`, `/students/{id}/grades`, `/students/{id}/attendance`, `/subjects/{id}/grades`, `/courses/attendance` y `/courses/{id}/attendance` (para docentes y administradores).
+- **Consumer groups:** cada servicio tiene su grupo, así que los dos reciben todos los eventos y avanzan con offsets propios. Dentro de un grupo, `concurrency=3` asigna un hilo por partición. Si se levantan más instancias de `ms-notification`, se reparten las particiones (asignación `CooperativeStickyAssignor`).
+- **Errores** (`KafkaConsumerConfig`):
+  - `ErrorHandlingDeserializer` evita que un JSON corrupto detenga el consumidor.
+  - El payload se valida con Bean Validation.
+  - `DefaultErrorHandler` reintenta con backoff exponencial (1 s, 2 s, 4 s) y deja un log con tópico, partición y offset.
+  - Al agotar los reintentos, `DeadLetterPublishingRecoverer` publica el mensaje en `<tópico>.DLT` con headers que indican la causa. Los payloads inválidos y los JSON corruptos van directo al DLT, sin reintentos.
+
+**Administración** (`ms-kafka-admin`, puerto 8088, solo `ADMINISTRATOR`, también a través del gateway):
+- `GET /api/kafka/cluster`: brokers y controller.
+- `GET /api/kafka/topics` · `GET /api/kafka/topics/{name}?includeDefaults=true`: particiones, líder, réplicas, ISR y configuración.
+- `POST /api/kafka/topics` con `{"name","partitions","replicationFactor","configs":{...}}`.
+- `PATCH /api/kafka/topics/{name}/configs` con `{"set":{"retention.ms":"..."},"reset":["cleanup.policy"]}`.
+- `POST /api/kafka/topics/{name}/partitions` con `{"totalCount":6}`.
+- `DELETE /api/kafka/topics/{name}`. Los tópicos de ClassFlow y los internos (`__*`) están protegidos y responden 409.
+- `GET /api/kafka/consumer-groups` · `GET /api/kafka/consumer-groups/{id}`: miembros, particiones asignadas, offsets y lag.
+- `POST /api/kafka/consumer-groups/{id}/reset-offsets` con `{"topic","strategy":"EARLIEST|LATEST"}`. Solo funciona con el grupo detenido.
+- `DELETE /api/kafka/consumer-groups/{id}`.
+- Si el clúster no responde se devuelve 503. Los errores del broker se traducen así: 404 si no existe, 409 si hay conflicto y 400 si la configuración es inválida.
 
 Bases de datos y migraciones
 ---------------------------

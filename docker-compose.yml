@@ -1,3 +1,19 @@
+# Backend de ClassFlow: bases de datos, GlitchTip, API Gateway, BFF y microservicios.
+#
+# La mensajeria vive en repositorios propios y se levanta antes que este:
+#   - ClassFlowKafka     Zookeeper x3, Kafka x3, kafka-init y Kafka UI
+#   - ClassFlowRabbitMQ  cluster RabbitMQ de 2 nodos
+# Los tres comparten la red externa classflow-back-net (docker network create classflow-back-net).
+# Los microservicios reintentan la conexion a Kafka y RabbitMQ, asi que no dependen del orden.
+
+# Los clientes AMQP conocen los 2 nodos y se conectan a uno al azar; si ese nodo cae,
+# Spring reconecta al siguiente de la lista.
+x-rabbitmq-addresses: &rabbitmq-addresses >-
+  amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD:?Definir RABBITMQ_PASSWORD en .env (la misma de ClassFlowRabbitMQ)}@rabbitmq-1:5672,amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq-2:5672
+
+x-kafka-client-env: &kafka-client-env
+  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka-1:29092,kafka-2:29092,kafka-3:29092}
+
 services:
   auth-db:
     restart: unless-stopped
@@ -131,26 +147,6 @@ services:
     networks:
       - classflow-back-net
 
-  # Broker de mensajeria. AMQP (5672) solo dentro de la red de Docker; panel de
-  # administracion en http://<host>:15672 con RABBITMQ_USER / RABBITMQ_PASSWORD.
-  rabbitmq:
-    restart: unless-stopped
-    image: rabbitmq:3.13-management-alpine
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-classflow}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Definir RABBITMQ_PASSWORD en backend/.env (openssl rand -hex 16)}
-    ports:
-      - "15672:15672"
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 10s
-      retries: 6
-    networks:
-      - classflow-back-net
-
   api-gateway:
     restart: unless-stopped
     build: ./api-gateway
@@ -169,6 +165,8 @@ services:
       - ms-assistance
       - ms-message
       - ms-notification
+      - ms-analytics
+      - ms-kafka-admin
     networks:
       - classflow-back-net
 
@@ -212,8 +210,9 @@ services:
     build: ./ms-academic
     image: ms-academic:local
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SENTRY_DSN=${SENTRY_DSN:-}
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       academic-db:
         condition: service_healthy
@@ -225,8 +224,9 @@ services:
     build: ./ms-assistance
     image: ms-assistance:local
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SENTRY_DSN=${SENTRY_DSN:-}
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       assistance-db:
         condition: service_healthy
@@ -238,13 +238,11 @@ services:
     build: ./ms-message
     image: ms-message:local
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SENTRY_DSN=${SENTRY_DSN:-}
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      SPRING_PROFILES_ACTIVE: docker
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      RABBITMQ_URL: *rabbitmq-addresses
     depends_on:
       message-db:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
     networks:
       - classflow-back-net
@@ -254,27 +252,46 @@ services:
     build: ./ms-notification
     image: ms-notification:local
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - MAIL_HOST=${MAIL_HOST:-smtp.gmail.com}
-      - MAIL_PORT=${MAIL_PORT:-587}
-      - MAIL_USERNAME=${MAIL_USERNAME}
-      - MAIL_PASSWORD=${MAIL_PASSWORD}
-      - MAIL_FROM=${MAIL_FROM}
-      - SENTRY_DSN=${SENTRY_DSN:-}
-      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Definir INTERNAL_API_KEY en backend/.env (openssl rand -hex 32)}
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?Definir INTERNAL_API_KEY en backend/.env (openssl rand -hex 32)}
+      RABBITMQ_URL: *rabbitmq-addresses
     depends_on:
       notification-db:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
     networks:
       - classflow-back-net
 
-networks:
-  classflow-back-net:
-    name: classflow-back-net
-    driver: bridge
+  # Consumidor analitico de los eventos Kafka (consumer group propio, estado en memoria
+  # reconstruible desde los topicos). Sin base de datos.
+  ms-analytics:
+    restart: unless-stopped
+    build: ./ms-analytics
+    image: ms-analytics:local
+    environment:
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    networks:
+      - classflow-back-net
+
+  # Administrador de Kafka: topicos, configuraciones, particiones y consumer groups.
+  ms-kafka-admin:
+    restart: unless-stopped
+    build: ./ms-kafka-admin
+    image: ms-kafka-admin:local
+    environment:
+      <<: *kafka-client-env
+      SPRING_PROFILES_ACTIVE: docker
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    networks:
+      - classflow-back-net
 
 volumes:
   auth-postgres-data:
@@ -284,4 +301,10 @@ volumes:
   notification-postgres-data:
   glitchtip-postgres-data:
   glitchtip-uploads:
-  rabbitmq-data:
+
+networks:
+  # Red compartida con ClassFlowKafka y ClassFlowRabbitMQ. Crearla una vez por host:
+  #   docker network create classflow-back-net
+  classflow-back-net:
+    name: classflow-back-net
+    external: true

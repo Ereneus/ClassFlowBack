@@ -27,6 +27,8 @@
         <module>ms-auth</module>
         <module>ms-message</module>
         <module>ms-notification</module>
+        <module>ms-analytics</module>
+        <module>ms-kafka-admin</module>
     </modules>
 
     <properties>

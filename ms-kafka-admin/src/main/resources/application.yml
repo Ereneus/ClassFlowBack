@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: ms-kafka-admin
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092,localhost:9093,localhost:9094}
+    client-id: ms-kafka-admin
+    admin:
+      # El servicio arranca aunque el cluster aun no responda; las operaciones devuelven 503.
+      fail-fast: false
+      properties:
+        request.timeout.ms: 10000
+        # Tope total por operacion (incluye los reintentos internos del AdminClient).
+        default.api.timeout.ms: 15000
+
+classflow:
+  kafka:
+    admin:
+      operation-timeout: 15s
+      # Topicos de los que dependen los microservicios: la API no permite eliminarlos.
+      protected-topics:
+        - classflow.academic.grades
+        - classflow.academic.grades.DLT
+        - classflow.assistance.attendance
+        - classflow.assistance.attendance.DLT
+
+server:
+  port: 8088
+
+auth:
+  service:
+    url: ${AUTH_SERVICE_URL:http://localhost:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info"
+
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: local
+  exception-resolver-order: -2147483648

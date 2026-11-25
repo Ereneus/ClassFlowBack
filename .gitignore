@@ -1,4 +1,58 @@
-# Environment variables (secrets - never commit)
+# Este repositorio solo versiona el backend: codigo Java/Spring Boot, Maven, Docker y k8s.
+# Cada microservicio tiene ademas su propio .gitignore.
+
+# --- Secretos ---
 .env
 .env.local
 .env.*.local
+
+# --- Maven / Java ---
+target/
+!**/src/main/**/target/
+!**/src/test/**/target/
+.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+hs_err_pid*.log
+replay_pid*.log
+HELP.md
+
+# --- Logs y temporales ---
+*.log
+logs/
+*.tmp
+*.bak
+*.swp
+
+# --- IDEs ---
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated/
+.springBeans
+.sts4-cache/
+/nbproject/private/
+/nbbuild/
+/nbdist/
+.nb-gradle/
+
+# --- Sistema operativo ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Documentos de la asignatura (informes, presentaciones, enunciados) ---
+# No son parte del codigo: se entregan por AVA, no por el repositorio.
+/*.docx
+/*.doc
+/*.pdf
+/*.pptx
+/*.ppt
+/*.xlsx
+~$*
