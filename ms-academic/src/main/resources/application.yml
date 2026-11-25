@@ -22,7 +22,7 @@ spring:
     baseline-on-migrate: false
     out-of-order: false
   # Productor Kafka. Comun a local y Docker: en Docker KAFKA_BOOTSTRAP_SERVERS apunta a la red
-  # interna (kafka-N:29092); en local a los listeners EXTERNAL del docker-compose.kafka.yml.
+  # interna (kafka-N:29092); en local a los listeners EXTERNAL de ClassFlowKafka (localhost:9092-9094).
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092,localhost:9093,localhost:9094}
     client-id: ms-academic
