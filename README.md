@@ -8,11 +8,27 @@ Frontend
 --------
 La SPA React/Vite (integrada con Microsoft Entra ID mediante MSAL) vive en un repositorio aparte y se despliega por separado (en otra instancia). `docker-compose.yml` solo levanta el backend. El frontend debe compilarse con `VITE_API_BASE_URL` apuntando al API Gateway de este backend (`http://IP_O_DOMINIO_BACKEND:8080/api`).
 
+Repositorios relacionados
+-------------------------
+La mensajería se versiona y se levanta aparte del backend:
+
+| Repositorio | Contenido |
+|---|---|
+| [ClassFlowKafka](https://github.com/Ereneus/ClassFlowKafka) | 3 Zookeeper, 3 brokers Kafka, creación de tópicos y Kafka UI |
+| [ClassFlowRabbitMQ](https://github.com/Ereneus/ClassFlowRabbitMQ) | Cluster RabbitMQ de 2 nodos |
+| [ClassFlowFront](https://github.com/Ereneus/ClassFlowFront) | Frontend React/Vite |
+
+Los tres stacks de Docker Compose comparten la red externa `classflow-back-net`. Los microservicios llegan a los brokers por nombre (`kafka-1..3:29092`, `rabbitmq-1..2:5672`).
+
 Ejecución
 ---------
-Completa `.env` a partir de `.env.example` y levanta el stack desde la raíz:
+Orden recomendado. Los microservicios reintentan la conexión a Kafka y RabbitMQ, así que no es obligatorio.
 
 ```bash
+docker network create classflow-back-net          # una vez por host
+# 1) en ClassFlowKafka:     docker compose up -d
+# 2) en ClassFlowRabbitMQ:  docker compose up -d
+# 3) aquí (completar .env a partir de .env.example; RABBITMQ_USER/PASSWORD iguales a ClassFlowRabbitMQ):
 docker compose up -d --build
 ```
 
@@ -190,13 +206,8 @@ El modo local solo se activa mediante una selección explícita del perfil `loca
 
 RabbitMQ
 --------
-- Docker Compose levanta un **cluster de 2 nodos** (`rabbitmq-1`, `rabbitmq-2`, imagen `rabbitmq:3.13-management-alpine`), la base de la EP2, definido en `docker-compose.rabbitmq.yml` e incluido desde `docker-compose.yml`. Definir `RABBITMQ_USER`, `RABBITMQ_PASSWORD` y `RABBITMQ_ERLANG_COOKIE` en `.env`.
-  - Los nodos forman el cluster con *peer discovery* `classic_config` (`rabbitmq/rabbitmq.conf`) y comparten la Erlang cookie. Usan `cluster_partition_handling = autoheal`, porque con 2 nodos ningún lado tiene mayoría tras una partición de red.
-  - Las colas, exchanges y la DLQ son los mismos de la EP2, sin cambios. Son colas clásicas: cada una vive en el nodo donde se declaró y el otro nodo la expone a los clientes.
-  - `ms-message` y `ms-notification` reciben los 2 nodos en `RABBITMQ_URL` (separados por coma), eligen uno al azar (`address-shuffle-mode=random`) y reconectan al otro si se cae. Esperan a que ambos nodos estén sanos antes de arrancar.
-  - Panel de administración: http://localhost:15672 y 15673 (uno por nodo; cualquiera muestra el cluster completo en *Overview → Nodes*).
-  - Verificar el cluster: `docker compose exec rabbitmq-1 rabbitmq-diagnostics cluster_status`.
-- El puerto AMQP (5672) solo es accesible dentro de la red de Docker. En EC2, abrir los puertos del panel (15672-15673) solo para la IP del administrador.
+- El cluster de 2 nodos (`rabbitmq-1`, `rabbitmq-2`, la base de la EP2) está en el repositorio [ClassFlowRabbitMQ](https://github.com/Ereneus/ClassFlowRabbitMQ), junto con su configuración, paneles de administración y pruebas.
+- `ms-message` y `ms-notification` reciben los 2 nodos en `RABBITMQ_URL` (separados por coma), eligen uno al azar (`address-shuffle-mode=random`) y reconectan al otro si se cae. `RABBITMQ_USER` y `RABBITMQ_PASSWORD` del `.env` deben coincidir con los de ClassFlowRabbitMQ.
 - `ms-message` publica los eventos de mensajes creados. `ms-notification` consume esos eventos y crea alertas.
 - Si RabbitMQ no está disponible, el mensaje se guarda igual y el error de publicación queda en el log de `ms-message` (el evento no se reintenta).
 - Ambos servicios declaran el exchange, las colas y los bindings, así que pueden arrancar en cualquier orden.
@@ -231,24 +242,79 @@ ms-assistance ─AttendanceEvent► classflow.assistance.attendance ─┴─►
 ms-kafka-admin ──AdminClient──► tópicos, configuraciones, particiones y consumer groups
 ```
 
-**Infraestructura** ([docker-compose.kafka.yml](docker-compose.kafka.yml), que `docker-compose.yml` incluye):
-- **Ensemble de 3 Zookeeper** (`zookeeper-1..3`, `confluentinc/cp-zookeeper:7.7.1`): guardan los metadatos del cluster (brokers vivos, tópicos, configuración) y eligen el broker *controller*. Con 3 nodos el quorum es 2, así que el cluster sigue operando si cae uno. Cada nodo se marca sano solo cuando ya está en el quorum (`srvr` → `Mode: leader|follower`). Ver el rol de cada uno: `docker compose exec zookeeper-1 bash -c "echo srvr | nc localhost 2181"`.
-- 3 brokers (`confluentinc/cp-kafka:7.7.1`) conectados a los 3 Zookeeper. Desde Docker se accede por `kafka-N:29092` y desde el host por `localhost:9092-9094` (`KAFKA_EXTERNAL_HOST` en EC2). La creación automática de tópicos está desactivada.
-- `kafka-init` ejecuta [kafka/create-topics.sh](kafka/create-topics.sh). El script es idempotente: crea los tópicos o vuelve a aplicarles la configuración. También se puede correr a mano con `docker compose -f docker-compose.kafka.yml run --rm kafka-init`.
-- Kafka UI en `http://<host>:8090`. Pide usuario y clave: `KAFKA_UI_USER` / `KAFKA_UI_PASSWORD` en `.env`.
+**Infraestructura:** el cluster (3 Zookeeper, 3 brokers, `kafka-init` con el script de tópicos y Kafka UI) está en el repositorio [ClassFlowKafka](https://github.com/Ereneus/ClassFlowKafka). Su README explica el rol de cada nodo, los listeners, la creación de tópicos y los comandos de supervisión. Los microservicios se conectan con `KAFKA_BOOTSTRAP_SERVERS` (por defecto `kafka-1:29092,kafka-2:29092,kafka-3:29092`).
 
-```bash
-docker compose -f docker-compose.kafka.yml up -d   # solo la plataforma Kafka
-docker compose up -d --build                       # todo el backend
-```
-
-**Tópicos** (todos con 3 particiones, RF 3 y `min.insync.replicas=2`; los parámetros están en `kafka/create-topics.sh`):
+**Tópicos** (todos con 3 particiones, RF 3 y `min.insync.replicas=2`; los parámetros están en `kafka/create-topics.sh` de ClassFlowKafka):
 
 | Tópico | Key | Política | Motivo |
 |---|---|---|---|
 | `classflow.academic.grades` | `gradeId` | `compact,delete`, 180 días | Guarda el estado: conserva la última versión de cada nota |
 | `classflow.assistance.attendance` | `studentId` | `delete`, 30 días / 1 GiB | Bitácora de eventos, en orden por estudiante |
 | `*.DLT` | la del mensaje original | `delete`, 14 días | Mensajes defectuosos, guardados para analizarlos o reprocesarlos |
+
+**Estructura de los eventos**
+
+Los eventos son `record` de Java. El productor los define en `event/` y cada consumidor tiene su propia copia en `kafka/event/`, con Bean Validation. Viajan como JSON plano, sin headers de tipo Java, así que un consumidor en otro lenguaje los puede leer igual. Los instantes van en ISO-8601 UTC y las fechas como `YYYY-MM-DD`. Todos los eventos comparten tres campos: `eventId`, `eventType` y `occurredAt`.
+
+`GradeEvent`: tópico `classflow.academic.grades`, key `gradeId`. Lo publica `GradeService` (ms-academic) al crear, corregir o eliminar una nota.
+
+| Campo | Tipo | Obligatorio | Para qué sirve |
+|---|---|---|---|
+| `eventId` | `String` (UUID) | Sí | Identifica el evento. Aparece en los logs de productor y consumidores para seguirlo de punta a punta. |
+| `eventType` | `GRADE_CREATED` \| `GRADE_UPDATED` \| `GRADE_DELETED` | Sí | Qué pasó con la nota. ms-notification avisa en `CREATED` y `UPDATED`; ms-analytics quita la nota en `DELETED`. |
+| `gradeId` | `Long` | Sí | Nota afectada. Es la key: todas las versiones de una nota van a la misma partición, en orden, y la compactación conserva la última. |
+| `studentId` | `Long` | Sí | Estudiante calificado: a quién notificar y con qué promedio agrupar. |
+| `evaluationId` | `Long` | No | Evaluación de la nota. |
+| `evaluationName` | `String` | No | Nombre de la evaluación. Va dentro del evento para que el consumidor arme el aviso sin consultar ms-academic. |
+| `subjectId` | `Long` | No | Asignatura. Con este campo ms-analytics calcula el promedio por asignatura. |
+| `score` | `Double` (≥ 0) | No | Nota obtenida. |
+| `maxScore` | `Double` (≥ 0) | No | Nota máxima de la evaluación, para calcular el porcentaje de logro. |
+| `occurredAt` | `Instant` | Sí | Cuándo ocurrió el cambio. ms-analytics descarta un evento más antiguo que el estado que ya tiene, por ejemplo al releer el tópico. |
+
+```json
+{
+  "eventId": "3f6c2a9e-8d0b-4b7e-9a51-2c1f0e7d4b10",
+  "eventType": "GRADE_CREATED",
+  "gradeId": 42,
+  "studentId": 7,
+  "evaluationId": 3,
+  "evaluationName": "Prueba 1",
+  "subjectId": 2,
+  "score": 6.5,
+  "maxScore": 7.0,
+  "occurredAt": "2026-11-25T16:20:00.123Z"
+}
+```
+
+`AttendanceEvent`: tópico `classflow.assistance.attendance`, key `studentId`. Lo publica `AttendanceService` (ms-assistance) al registrar o corregir una asistencia.
+
+| Campo | Tipo | Obligatorio | Para qué sirve |
+|---|---|---|---|
+| `eventId` | `String` (UUID) | Sí | Identifica el evento en los logs. |
+| `eventType` | `ATTENDANCE_REGISTERED` \| `ATTENDANCE_UPDATED` | Sí | Registro nuevo o corrección de uno existente. |
+| `attendanceId` | `Long` | Sí | Registro afectado. ms-analytics actualiza por este id, así que una corrección reemplaza al registro anterior en vez de sumarse. |
+| `studentId` | `Long` | Sí | Estudiante. Es la key: los eventos de un estudiante van a la misma partición y se procesan en orden. |
+| `courseId` | `Long` | Sí | Curso, para la asistencia por curso. |
+| `date` | `LocalDate` | Sí | Día de clases. |
+| `present` | `Boolean` | Sí | Si asistió. ms-notification solo avisa las ausencias. |
+| `justification` | `String` | No | Justificación de la ausencia. Cambia el texto del aviso y cuenta como ausencia justificada en la analítica. |
+| `occurredAt` | `Instant` | Sí | Cuándo ocurrió el cambio (mismo uso que en `GradeEvent`). |
+
+```json
+{
+  "eventId": "b1e0d7c4-5a2f-4f0e-8c3d-6a9b7e2f1d05",
+  "eventType": "ATTENDANCE_REGISTERED",
+  "attendanceId": 118,
+  "studentId": 7,
+  "courseId": 1,
+  "date": "2026-11-25",
+  "present": false,
+  "justification": null,
+  "occurredAt": "2026-11-25T11:05:42.871Z"
+}
+```
+
+Un evento al que le falta un campo obligatorio no se reintenta: va directo a `<tópico>.DLT`.
 
 **Productores** (`ms-academic`: `GradeEventProducer`; `ms-assistance`: `AttendanceEventProducer`):
 - Usan DTO tipados (`GradeEvent`, `AttendanceEvent`) serializados a JSON sin headers de tipo Java. Las fechas van en ISO-8601.

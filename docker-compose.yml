@@ -1,24 +1,18 @@
-# La plataforma Kafka (Zookeeper, 3 brokers, kafka-init y kafka-ui) y el cluster RabbitMQ
-# (2 nodos) viven en sus propios archivos para poder levantarlos solos; se incluyen aqui
-# para que `docker compose up` arranque todo junto.
-# La red classflow-back-net se define en docker-compose.kafka.yml.
-include:
-  - docker-compose.kafka.yml
-  - docker-compose.rabbitmq.yml
+# Backend de ClassFlow: bases de datos, GlitchTip, API Gateway, BFF y microservicios.
+#
+# La mensajeria vive en repositorios propios y se levanta antes que este:
+#   - ClassFlowKafka     Zookeeper x3, Kafka x3, kafka-init y Kafka UI
+#   - ClassFlowRabbitMQ  cluster RabbitMQ de 2 nodos
+# Los tres comparten la red externa classflow-back-net (docker network create classflow-back-net).
+# Los microservicios reintentan la conexion a Kafka y RabbitMQ, asi que no dependen del orden.
 
 # Los clientes AMQP conocen los 2 nodos y se conectan a uno al azar; si ese nodo cae,
 # Spring reconecta al siguiente de la lista.
 x-rabbitmq-addresses: &rabbitmq-addresses >-
-  amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq-1:5672,amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq-2:5672
-
-x-rabbitmq-depends-on: &rabbitmq-depends-on
-  rabbitmq-1:
-    condition: service_healthy
-  rabbitmq-2:
-    condition: service_healthy
+  amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD:?Definir RABBITMQ_PASSWORD en .env (la misma de ClassFlowRabbitMQ)}@rabbitmq-1:5672,amqp://${RABBITMQ_USER:-classflow}:${RABBITMQ_PASSWORD}@rabbitmq-2:5672
 
 x-kafka-client-env: &kafka-client-env
-  KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
+  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka-1:29092,kafka-2:29092,kafka-3:29092}
 
 services:
   auth-db:
@@ -222,8 +216,6 @@ services:
     depends_on:
       academic-db:
         condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
     networks:
       - classflow-back-net
 
@@ -238,8 +230,6 @@ services:
     depends_on:
       assistance-db:
         condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
     networks:
       - classflow-back-net
 
@@ -252,7 +242,6 @@ services:
       SENTRY_DSN: ${SENTRY_DSN:-}
       RABBITMQ_URL: *rabbitmq-addresses
     depends_on:
-      <<: *rabbitmq-depends-on
       message-db:
         condition: service_healthy
     networks:
@@ -274,11 +263,8 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?Definir INTERNAL_API_KEY en backend/.env (openssl rand -hex 32)}
       RABBITMQ_URL: *rabbitmq-addresses
     depends_on:
-      <<: *rabbitmq-depends-on
       notification-db:
         condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
     networks:
       - classflow-back-net
 
@@ -292,9 +278,6 @@ services:
       <<: *kafka-client-env
       SPRING_PROFILES_ACTIVE: docker
       SENTRY_DSN: ${SENTRY_DSN:-}
-    depends_on:
-      kafka-init:
-        condition: service_completed_successfully
     networks:
       - classflow-back-net
 
@@ -307,13 +290,6 @@ services:
       <<: *kafka-client-env
       SPRING_PROFILES_ACTIVE: docker
       SENTRY_DSN: ${SENTRY_DSN:-}
-    depends_on:
-      kafka-1:
-        condition: service_healthy
-      kafka-2:
-        condition: service_healthy
-      kafka-3:
-        condition: service_healthy
     networks:
       - classflow-back-net
 
@@ -325,3 +301,10 @@ volumes:
   notification-postgres-data:
   glitchtip-postgres-data:
   glitchtip-uploads:
+
+networks:
+  # Red compartida con ClassFlowKafka y ClassFlowRabbitMQ. Crearla una vez por host:
+  #   docker network create classflow-back-net
+  classflow-back-net:
+    name: classflow-back-net
+    external: true
