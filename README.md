@@ -8,6 +8,10 @@ Frontend
 --------
 La SPA React/Vite (integrada con Microsoft Entra ID mediante MSAL) vive en un repositorio aparte y se despliega por separado (en otra instancia). `docker-compose.yml` solo levanta el backend. El frontend debe compilarse con `VITE_API_BASE_URL` apuntando al API Gateway de este backend (`http://IP_O_DOMINIO_BACKEND:8080/api`).
 
+Informe EP3
+-----------
+El informe técnico de la Evaluación Parcial 3 (Kafka) está en [docs/INFORME-EP3.md](docs/INFORME-EP3.md), con enlaces al informe y la presentación en Canva.
+
 Repositorios relacionados
 -------------------------
 La mensajería se versiona y se levanta aparte del backend:
